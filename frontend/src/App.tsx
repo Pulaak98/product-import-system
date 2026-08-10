@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import ProductTable from './components/ProductTable';
+import ImportModal from './components/ImportModal';
 import { getProducts } from './services/product.service';
 import type { Product } from './types/product';
 
@@ -16,6 +17,9 @@ function App() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [showImportModal, setShowImportModal] =
+    useState(false);
 
   async function loadProducts() {
     try {
@@ -61,11 +65,11 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-neutral-100">
-      <div className="mx-auto max-w-7xl px-6 py-10">
-        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <main className="min-h-screen bg-neutral-50">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold text-neutral-900">
+            <h1 className="text-2xl font-semibold text-neutral-900">
               Products
             </h1>
 
@@ -76,6 +80,7 @@ function App() {
 
           <button
             type="button"
+            onClick={() => setShowImportModal(true)}
             className="rounded-lg bg-neutral-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800"
           >
             Import Products
@@ -90,7 +95,9 @@ function App() {
             <input
               type="text"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) =>
+                setSearch(event.target.value)
+              }
               placeholder="Search products..."
               className="flex-1 rounded-lg border border-neutral-300 px-4 py-2.5 text-sm outline-none focus:border-neutral-500"
             />
@@ -140,20 +147,25 @@ function App() {
                 <button
                   type="button"
                   disabled={page <= 1}
-                  onClick={() => setPage((current) => current - 1)}
+                  onClick={() =>
+                    setPage((current) => current - 1)
+                  }
                   className="rounded-lg border border-neutral-300 bg-white px-4 py-2 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Previous
                 </button>
 
                 <span className="px-2">
-                  Page {totalPages === 0 ? 0 : page} of {totalPages}
+                  Page {totalPages === 0 ? 0 : page} of{' '}
+                  {totalPages}
                 </span>
 
                 <button
                   type="button"
                   disabled={page >= totalPages}
-                  onClick={() => setPage((current) => current + 1)}
+                  onClick={() =>
+                    setPage((current) => current + 1)
+                  }
                   className="rounded-lg border border-neutral-300 bg-white px-4 py-2 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Next
@@ -163,6 +175,12 @@ function App() {
           </>
         )}
       </div>
+
+      {showImportModal && (
+        <ImportModal
+          onClose={() => setShowImportModal(false)}
+        />
+      )}
     </main>
   );
 }
