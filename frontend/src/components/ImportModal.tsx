@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { createImportJob, uploadCsv } from "../services/import.service";
+
 import type { CsvPreviewRow, CsvUploadResponse } from "../types/import";
 
 interface ImportModalProps {
@@ -24,7 +25,11 @@ const PRODUCT_FIELDS: ProductField[] = [
   { key: "sku", label: "SKU", required: true },
   { key: "description", label: "Description", required: false },
   { key: "price", label: "Price", required: true },
-  { key: "stock_quantity", label: "Stock Quantity", required: false },
+  {
+    key: "stock_quantity",
+    label: "Stock Quantity",
+    required: false,
+  },
   { key: "category", label: "Category", required: false },
   { key: "brand", label: "Brand", required: false },
   { key: "status", label: "Status", required: false },
@@ -88,11 +93,19 @@ function ImportModal({ onClose }: ImportModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<ImportStep>(1);
+
   const [uploading, setUploading] = useState(false);
+
+  const [creatingJob, setCreatingJob] = useState(false);
+
+  const [jobCreated, setJobCreated] = useState(false);
+
   const [error, setError] = useState("");
+
   const [uploadResult, setUploadResult] = useState<CsvUploadResponse | null>(
     null,
   );
+
   const [isDragging, setIsDragging] = useState(false);
 
   const [mappings, setMappings] = useState<Record<string, string>>({});
@@ -102,6 +115,7 @@ function ImportModal({ onClose }: ImportModalProps) {
     setUploadResult(null);
     setMappings({});
     setStep(1);
+    setJobCreated(false);
 
     if (!file.name.toLowerCase().endsWith(".csv")) {
       setError("Only CSV files are supported.");
@@ -149,18 +163,19 @@ function ImportModal({ onClose }: ImportModalProps) {
     const file = event.target.files?.[0];
 
     if (file) {
-      handleFile(file);
+      void handleFile(file);
     }
   }
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
+
     setIsDragging(false);
 
     const file = event.dataTransfer.files?.[0];
 
     if (file) {
-      handleFile(file);
+      void handleFile(file);
     }
   }
 
@@ -190,6 +205,7 @@ function ImportModal({ onClose }: ImportModalProps) {
     setError("");
     setMappings({});
     setStep(1);
+    setJobCreated(false);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -271,9 +287,13 @@ function ImportModal({ onClose }: ImportModalProps) {
     const errors: string[] = [];
 
     const name = getMappedValue(row, "name");
+
     const sku = getMappedValue(row, "sku");
+
     const price = getMappedValue(row, "price");
+
     const stockQuantity = getMappedValue(row, "stock_quantity");
+
     const status = getMappedValue(row, "status");
 
     if (!name) {
@@ -372,42 +392,39 @@ function ImportModal({ onClose }: ImportModalProps) {
       return;
     }
 
-    if (!uploadResult) {
-      return;
-    }
+    if (step === 3) {
+      if (!uploadResult) {
+        return;
+      }
 
-    const validationResults = getPreviewValidation();
+      if (invalidPreviewCount > 0) {
+        setError(
+          "The import cannot start because the preview contains invalid records.",
+        );
+        return;
+      }
 
-    const invalidRecords = validationResults.filter((result) => !result.valid);
+      try {
+        setCreatingJob(true);
+        setError("");
 
-    if (invalidRecords.length > 0) {
-      setError(
-        "The preview contains invalid records. Please fix the CSV before importing.",
-      );
-      return;
-    }
+        await createImportJob(
+          uploadResult.fileId,
+          uploadResult.originalFileName,
+          mappings,
+        );
 
-    try {
-      setUploading(true);
-      setError("");
-
-      const result = await createImportJob(
-        uploadResult.fileId,
-        uploadResult.originalFileName,
-        mappings,
-      );
-
-      console.log("Import job created:", result.job);
-
-      onClose();
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to create import job.",
-      );
-    } finally {
-      setUploading(false);
+        setJobCreated(true);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create import job.",
+        );
+      } finally {
+        setCreatingJob(false);
+      }
     }
   }
+
   const validationResults = step === 3 ? getPreviewValidation() : [];
 
   const validPreviewCount = validationResults.filter(
@@ -626,18 +643,20 @@ function ImportModal({ onClose }: ImportModalProps) {
                         </thead>
 
                         <tbody className="divide-y divide-neutral-100">
-                          {uploadResult.previewRows.map((row) => (
-                            <tr key={row.sku ?? Math.random()}>
-                              {uploadResult.headers.map((header) => (
-                                <td
-                                  key={header}
-                                  className="whitespace-nowrap px-4 py-3 text-neutral-600"
-                                >
-                                  {row[header] || "-"}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
+                          {uploadResult.previewRows.map(
+                            (row: CsvPreviewRow, rowIndex) => (
+                              <tr key={rowIndex}>
+                                {uploadResult.headers.map((header) => (
+                                  <td
+                                    key={header}
+                                    className="whitespace-nowrap px-4 py-3 text-neutral-600"
+                                  >
+                                    {row[header] || "-"}
+                                  </td>
+                                ))}
+                              </tr>
+                            ),
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -668,7 +687,9 @@ function ImportModal({ onClose }: ImportModalProps) {
               <div className="overflow-hidden rounded-xl border border-neutral-200">
                 <div className="grid grid-cols-[1.2fr_1.5fr_1fr] gap-4 bg-neutral-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   <div>Product Field</div>
+
                   <div>CSV Column</div>
+
                   <div>Sample Value</div>
                 </div>
 
@@ -766,12 +787,18 @@ function ImportModal({ onClose }: ImportModalProps) {
                   </p>
                 </div>
 
-                <div className="rounded-xl border border-neutral-200 bg-white p-4">
-                  <p className="text-sm text-neutral-500">Invalid Records</p>
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                  <p className="text-sm text-red-700">Invalid Records</p>
 
                   <p className="mt-1 text-2xl font-semibold text-red-700">
                     {invalidPreviewCount}
                   </p>
+
+                  {invalidPreviewCount > 0 && (
+                    <p className="mt-1 text-xs text-red-600">
+                      Fix the invalid records before importing.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -801,6 +828,13 @@ function ImportModal({ onClose }: ImportModalProps) {
                     })}
                 </div>
               </div>
+
+              {jobCreated && (
+                <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-sm text-green-700">
+                  Import job created successfully. The background processor will
+                  now process the CSV.
+                </div>
+              )}
 
               <div className="overflow-x-auto rounded-xl border border-neutral-200">
                 <table className="min-w-full text-left text-sm">
@@ -915,6 +949,12 @@ function ImportModal({ onClose }: ImportModalProps) {
                   No data rows were found in the CSV.
                 </div>
               )}
+
+              {error && (
+                <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -929,7 +969,8 @@ function ImportModal({ onClose }: ImportModalProps) {
 
                   setStep((current) => (current - 1) as ImportStep);
                 }}
-                className="rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+                disabled={creatingJob}
+                className="rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Back
               </button>
@@ -940,7 +981,8 @@ function ImportModal({ onClose }: ImportModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+              disabled={creatingJob}
+              className="rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Cancel
             </button>
@@ -949,16 +991,24 @@ function ImportModal({ onClose }: ImportModalProps) {
               type="button"
               disabled={
                 uploading ||
+                creatingJob ||
+                jobCreated ||
                 (step === 1
                   ? !canContinueToMapping()
                   : step === 2
                     ? !canContinueFromMapping()
-                    : false)
+                    : invalidPreviewCount > 0)
               }
-              onClick={handleContinue}
+              onClick={() => void handleContinue()}
               className="rounded-lg bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {step === 3 ? "Create Import Job" : "Continue"}
+              {step === 3
+                ? creatingJob
+                  ? "Creating Import..."
+                  : jobCreated
+                    ? "Import Started"
+                    : "Continue to Import"
+                : "Continue"}
             </button>
           </div>
         </div>

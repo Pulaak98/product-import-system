@@ -1,17 +1,20 @@
 import {
   BadRequestException,
+  ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
-  Inject,
 } from '@nestjs/common';
-import { mkdir, writeFile, unlink, access } from 'fs/promises';
+import { mkdir, unlink, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { Kysely } from 'kysely';
 
+import { CsvService } from './csv/csv.service';
+import { CreateImportJobDto } from './dto/create-import-job.dto';
+
 import { DATABASE } from '../database/database.module';
 import { Database } from '../database/database.types';
-import { CsvService } from './csv/csv.service';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
@@ -25,6 +28,7 @@ export class ImportService {
 
   constructor(
     private readonly csvService: CsvService,
+
     @Inject(DATABASE)
     private readonly db: Kysely<Database>,
   ) {}
@@ -92,34 +96,91 @@ export class ImportService {
     }
   }
 
-  async createImportJob(data: {
-    fileId: string;
-    originalFileName: string;
-    columnMappings: Record<string, string>;
-  }) {
-    const filePath = this.getFilePath(data.fileId);
+  async createImportJob(
+    dto: CreateImportJobDto,
+  ) {
+    const filePath = join(
+      this.uploadDirectory,
+      `${dto.fileId}.csv`,
+    );
+
+    let preview;
 
     try {
-      await access(filePath);
+      preview =
+        await this.csvService.readPreview(
+          filePath,
+          Number.MAX_SAFE_INTEGER,
+        );
     } catch {
       throw new NotFoundException(
         'Uploaded CSV file could not be found.',
       );
     }
 
-    const mappingErrors =
-      this.validateMappings(data.columnMappings);
-
-    if (mappingErrors.length > 0) {
-      throw new BadRequestException(mappingErrors);
-    }
-
-    const totalRecords =
-      await this.csvService.getRecordCount(filePath);
-
-    if (totalRecords === 0) {
+    if (preview.rows.length === 0) {
       throw new BadRequestException(
         'The CSV file does not contain any data rows.',
+      );
+    }
+
+    const requiredMappings = [
+      'name',
+      'sku',
+      'price',
+    ];
+
+    for (const field of requiredMappings) {
+      if (!dto.columnMappings[field]) {
+        throw new BadRequestException(
+          `${field} must be mapped before creating the import job.`,
+        );
+      }
+    }
+
+    const mappedColumns =
+      Object.values(dto.columnMappings);
+
+    const uniqueColumns = new Set(mappedColumns);
+
+    if (
+      mappedColumns.length !== uniqueColumns.size
+    ) {
+      throw new BadRequestException(
+        'A CSV column can only be mapped once.',
+      );
+    }
+
+    const invalidMappings =
+      mappedColumns.some(
+        (column) =>
+          !preview.headers.includes(column),
+      );
+
+    if (invalidMappings) {
+      throw new BadRequestException(
+        'One or more mapped CSV columns do not exist.',
+      );
+    }
+
+    const existingJob = await this.db
+      .selectFrom('import_jobs')
+      .select('id')
+      .where(
+        'original_file_name',
+        '=',
+        dto.originalFileName,
+      )
+      .where(
+        'status',
+        'in',
+        ['pending', 'processing'],
+      )
+      .executeTakeFirst();
+
+    if (existingJob) {
+      throw new ConflictException(
+        'An import job for this file is already processing.',
       );
     }
 
@@ -127,18 +188,17 @@ export class ImportService {
       .insertInto('import_jobs')
       .values({
         user_id: null,
-        original_file_name: data.originalFileName,
+        original_file_name:
+          dto.originalFileName,
         stored_file_location: filePath,
         import_type: 'product_csv',
         status: 'pending',
-        total_records: totalRecords,
+        total_records: preview.rows.length,
         processed_records: 0,
         successful_records: 0,
         failed_records: 0,
         progress_percentage: 0,
-        column_mappings: JSON.stringify(
-          data.columnMappings,
-        ),
+        column_mappings: dto.columnMappings,
         started_at: null,
         completed_at: null,
         failure_message: null,
@@ -152,72 +212,9 @@ export class ImportService {
     };
   }
 
-  async getImportJob(id: number) {
-    const job = await this.db
-      .selectFrom('import_jobs')
-      .selectAll()
-      .where('id', '=', id)
-      .executeTakeFirst();
-
-    if (!job) {
-      throw new NotFoundException(
-        'Import job not found.',
-      );
-    }
-
-    return job;
-  }
-
-  private validateMappings(
-    mappings: Record<string, string>,
-  ): string[] {
-    const errors: string[] = [];
-
-    if (!mappings || typeof mappings !== 'object') {
-      return ['Column mappings are required.'];
-    }
-
-    if (!mappings.name) {
-      errors.push(
-        'Product Name is required and must be mapped.',
-      );
-    }
-
-    if (!mappings.sku) {
-      errors.push(
-        'SKU is required and must be mapped.',
-      );
-    }
-
-    if (!mappings.price) {
-      errors.push(
-        'Price is required and must be mapped.',
-      );
-    }
-
-    const columns = Object.values(mappings).filter(
-      Boolean,
-    );
-
-    const uniqueColumns = new Set(columns);
-
-    if (columns.length !== uniqueColumns.size) {
-      errors.push(
-        'A CSV column can only be mapped once.',
-      );
-    }
-
-    return errors;
-  }
-
-  private getFilePath(fileId: string): string {
-    return join(
-      this.uploadDirectory,
-      `${fileId}.csv`,
-    );
-  }
-
-  private async removeFile(filePath: string) {
+  private async removeFile(
+    filePath: string,
+  ) {
     try {
       await unlink(filePath);
     } catch {

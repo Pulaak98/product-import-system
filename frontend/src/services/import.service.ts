@@ -1,6 +1,6 @@
 import type {
-  CreateImportJobResponse,
   CsvUploadResponse,
+  CreateImportJobResponse,
 } from '../types/import';
 
 const API_URL = 'http://localhost:3000';
@@ -55,32 +55,9 @@ export async function createImportJob(
   const data = await response.json();
 
   if (!response.ok) {
-    const message = Array.isArray(data.message)
-      ? data.message[0]
-      : data.message;
-
-    throw new Error(
-      message ||
-        'Failed to create import job.',
-    );
-  }
-
-  return data;
-}
-
-export async function getImportJob(
-  id: number,
-) {
-  const response = await fetch(
-    `${API_URL}/imports/jobs/${id}`,
-  );
-
-  const data = await response.json();
-
-  if (!response.ok) {
     throw new Error(
       data.message ||
-        'Failed to get import job.',
+        'Failed to create import job.',
     );
   }
 
