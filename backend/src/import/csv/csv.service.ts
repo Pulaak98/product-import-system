@@ -16,10 +16,15 @@ export class CsvService {
     filePath: string,
     previewLimit = 20,
   ): Promise<CsvPreview> {
-    const fileContent = await readFile(filePath, 'utf-8');
+    const fileContent = await readFile(
+      filePath,
+      'utf-8',
+    );
 
     if (!fileContent.trim()) {
-      throw new BadRequestException('The CSV file is empty.');
+      throw new BadRequestException(
+        'The CSV file is empty.',
+      );
     }
 
     let records: Record<string, string>[];
@@ -56,5 +61,36 @@ export class CsvService {
       headers,
       rows: records.slice(0, previewLimit),
     };
+  }
+
+  async getRecordCount(
+    filePath: string,
+  ): Promise<number> {
+    const fileContent = await readFile(
+      filePath,
+      'utf-8',
+    );
+
+    if (!fileContent.trim()) {
+      throw new BadRequestException(
+        'The CSV file is empty.',
+      );
+    }
+
+    try {
+      const records = parse(fileContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        bom: true,
+        relax_column_count: false,
+      });
+
+      return records.length;
+    } catch {
+      throw new BadRequestException(
+        'The CSV file could not be parsed.',
+      );
+    }
   }
 }

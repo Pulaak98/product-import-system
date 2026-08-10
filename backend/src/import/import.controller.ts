@@ -1,6 +1,10 @@
 import {
   BadRequestException,
+  Body,
   Controller,
+  Get,
+  Param,
+  ParseIntPipe,
   Post,
   UploadedFile,
   UseInterceptors,
@@ -9,9 +13,16 @@ import {
   FileInterceptor,
 } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+
 import { ImportService } from './import.service';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+interface CreateImportJobBody {
+  fileId: string;
+  originalFileName: string;
+  columnMappings: Record<string, string>;
+}
 
 @Controller('imports')
 export class ImportController {
@@ -26,7 +37,11 @@ export class ImportController {
       limits: {
         fileSize: MAX_FILE_SIZE,
       },
-      fileFilter: (_request, file, callback) => {
+      fileFilter: (
+        _request,
+        file,
+        callback,
+      ) => {
         const extension = file.originalname
           .toLowerCase()
           .split('.')
@@ -48,8 +63,29 @@ export class ImportController {
     }),
   )
   uploadCsv(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile()
+    file: Express.Multer.File,
   ) {
     return this.importService.uploadCsv(file);
+  }
+
+  @Post('jobs')
+  createImportJob(
+    @Body()
+    body: CreateImportJobBody,
+  ) {
+    return this.importService.createImportJob({
+      fileId: body.fileId,
+      originalFileName: body.originalFileName,
+      columnMappings: body.columnMappings,
+    });
+  }
+
+  @Get('jobs/:id')
+  getImportJob(
+    @Param('id', ParseIntPipe)
+    id: number,
+  ) {
+    return this.importService.getImportJob(id);
   }
 }

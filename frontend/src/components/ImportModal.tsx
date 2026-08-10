@@ -1,12 +1,12 @@
-import { useRef, useState } from 'react';
-import { uploadCsv } from '../services/import.service';
-import type { CsvPreviewRow, CsvUploadResponse } from '../types/import';
+import { useRef, useState } from "react";
+import { createImportJob, uploadCsv } from "../services/import.service";
+import type { CsvPreviewRow, CsvUploadResponse } from "../types/import";
 
 interface ImportModalProps {
   onClose: () => void;
 }
 
-type ImportStep = 1 | 2;
+type ImportStep = 1 | 2 | 3;
 
 interface ProductField {
   key: string;
@@ -14,58 +14,52 @@ interface ProductField {
   required: boolean;
 }
 
+interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
 const PRODUCT_FIELDS: ProductField[] = [
-  { key: 'name', label: 'Product Name', required: true },
-  { key: 'sku', label: 'SKU', required: true },
-  { key: 'description', label: 'Description', required: false },
-  { key: 'price', label: 'Price', required: true },
-  { key: 'stock_quantity', label: 'Stock Quantity', required: false },
-  { key: 'category', label: 'Category', required: false },
-  { key: 'brand', label: 'Brand', required: false },
-  { key: 'status', label: 'Status', required: false },
+  { key: "name", label: "Product Name", required: true },
+  { key: "sku", label: "SKU", required: true },
+  { key: "description", label: "Description", required: false },
+  { key: "price", label: "Price", required: true },
+  { key: "stock_quantity", label: "Stock Quantity", required: false },
+  { key: "category", label: "Category", required: false },
+  { key: "brand", label: "Brand", required: false },
+  { key: "status", label: "Status", required: false },
 ];
 
 const FIELD_ALIASES: Record<string, string[]> = {
-  name: [
-    'name',
-    'product_name',
-    'product name',
-    'product',
-    'title',
-  ],
-  sku: ['sku', 'product_sku', 'product sku'],
-  description: ['description', 'product_description'],
+  name: ["name", "product_name", "product name", "product", "title"],
+  sku: ["sku", "product_sku", "product sku"],
+  description: ["description", "product_description"],
   price: [
-    'price',
-    'unit_price',
-    'unit price',
-    'product_price',
-    'product price',
+    "price",
+    "unit_price",
+    "unit price",
+    "product_price",
+    "product price",
   ],
   stock_quantity: [
-    'stock',
-    'stock_quantity',
-    'stock quantity',
-    'quantity',
-    'qty',
+    "stock",
+    "stock_quantity",
+    "stock quantity",
+    "quantity",
+    "qty",
   ],
-  category: ['category', 'category_name', 'category name'],
-  brand: ['brand', 'brand_name', 'brand name'],
-  status: ['status', 'product_status', 'product status'],
+  category: ["category", "category_name", "category name"],
+  brand: ["brand", "brand_name", "brand name"],
+  status: ["status", "product_status", "product status"],
 };
 
+const VALID_STATUSES = ["active", "inactive", "draft"];
+
 function normalize(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ');
+  return value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
 }
 
-function getSuggestedColumn(
-  fieldKey: string,
-  headers: string[],
-): string {
+function getSuggestedColumn(fieldKey: string, headers: string[]): string {
   const aliases = FIELD_ALIASES[fieldKey] ?? [];
 
   const normalizedAliases = aliases.map(normalize);
@@ -83,12 +77,11 @@ function getSuggestedColumn(
 
     return normalizedAliases.some(
       (alias) =>
-        normalizedHeader.includes(alias) ||
-        alias.includes(normalizedHeader),
+        normalizedHeader.includes(alias) || alias.includes(normalizedHeader),
     );
   });
 
-  return partialMatch ?? '';
+  return partialMatch ?? "";
 }
 
 function ImportModal({ onClose }: ImportModalProps) {
@@ -96,29 +89,32 @@ function ImportModal({ onClose }: ImportModalProps) {
 
   const [step, setStep] = useState<ImportStep>(1);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
-  const [uploadResult, setUploadResult] =
-    useState<CsvUploadResponse | null>(null);
-
+  const [error, setError] = useState("");
+  const [uploadResult, setUploadResult] = useState<CsvUploadResponse | null>(
+    null,
+  );
   const [isDragging, setIsDragging] = useState(false);
 
-  const [mappings, setMappings] = useState<
-    Record<string, string>
-  >({});
+  const [mappings, setMappings] = useState<Record<string, string>>({});
 
   async function handleFile(file: File) {
-    setError('');
+    setError("");
     setUploadResult(null);
     setMappings({});
     setStep(1);
 
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      setError('Only CSV files are supported.');
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setError("Only CSV files are supported.");
       return;
     }
 
     if (file.size === 0) {
-      setError('The CSV file is empty.');
+      setError("The CSV file is empty.");
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setError("The CSV file must not exceed 10 MB.");
       return;
     }
 
@@ -129,36 +125,27 @@ function ImportModal({ onClose }: ImportModalProps) {
 
       setUploadResult(result);
 
-      const suggestedMappings: Record<string, string> =
-        {};
+      const suggestedMappings: Record<string, string> = {};
 
       PRODUCT_FIELDS.forEach((field) => {
-        const suggestedColumn = getSuggestedColumn(
-          field.key,
-          result.headers,
-        );
+        const suggestedColumn = getSuggestedColumn(field.key, result.headers);
 
         if (suggestedColumn) {
-          suggestedMappings[field.key] =
-            suggestedColumn;
+          suggestedMappings[field.key] = suggestedColumn;
         }
       });
 
       setMappings(suggestedMappings);
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to upload CSV file.',
+        err instanceof Error ? err.message : "Failed to upload CSV file.",
       );
     } finally {
       setUploading(false);
     }
   }
 
-  function handleFileChange(
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) {
+  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
     if (file) {
@@ -166,11 +153,8 @@ function ImportModal({ onClose }: ImportModalProps) {
     }
   }
 
-  function handleDrop(
-    event: React.DragEvent<HTMLDivElement>,
-  ) {
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
-
     setIsDragging(false);
 
     const file = event.dataTransfer.files?.[0];
@@ -180,9 +164,7 @@ function ImportModal({ onClose }: ImportModalProps) {
     }
   }
 
-  function handleDragOver(
-    event: React.DragEvent<HTMLDivElement>,
-  ) {
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(true);
   }
@@ -205,25 +187,22 @@ function ImportModal({ onClose }: ImportModalProps) {
 
   function handleRemoveFile() {
     setUploadResult(null);
-    setError('');
+    setError("");
     setMappings({});
     setStep(1);
 
     if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      fileInputRef.current.value = "";
     }
   }
 
-  function handleMappingChange(
-    fieldKey: string,
-    column: string,
-  ) {
+  function handleMappingChange(fieldKey: string, column: string) {
     setMappings((current) => ({
       ...current,
       [fieldKey]: column,
     }));
 
-    setError('');
+    setError("");
   }
 
   function getMappingErrors(): string[] {
@@ -234,13 +213,8 @@ function ImportModal({ onClose }: ImportModalProps) {
     const errors: string[] = [];
 
     PRODUCT_FIELDS.forEach((field) => {
-      if (
-        field.required &&
-        !mappings[field.key]
-      ) {
-        errors.push(
-          `${field.label} is required and must be mapped.`,
-        );
+      if (field.required && !mappings[field.key]) {
+        errors.push(`${field.label} is required and must be mapped.`);
       }
     });
 
@@ -249,18 +223,13 @@ function ImportModal({ onClose }: ImportModalProps) {
       .map(([, column]) => column);
 
     const duplicateColumns = selectedColumns.filter(
-      (column, index) =>
-        selectedColumns.indexOf(column) !== index,
+      (column, index) => selectedColumns.indexOf(column) !== index,
     );
 
-    const uniqueDuplicateColumns = [
-      ...new Set(duplicateColumns),
-    ];
+    const uniqueDuplicateColumns = [...new Set(duplicateColumns)];
 
     uniqueDuplicateColumns.forEach((column) => {
-      errors.push(
-        `CSV column "${column}" can only be mapped once.`,
-      );
+      errors.push(`CSV column "${column}" can only be mapped once.`);
     });
 
     return errors;
@@ -276,44 +245,182 @@ function ImportModal({ onClose }: ImportModalProps) {
 
   function getSampleValue(column: string): string {
     if (!uploadResult || !column) {
-      return '-';
+      return "-";
     }
 
     const row = uploadResult.previewRows[0];
 
     if (!row) {
-      return '-';
+      return "-";
     }
 
-    return row[column] || '-';
+    return row[column] || "-";
   }
 
-  function handleContinue() {
+  function getMappedValue(row: CsvPreviewRow, fieldKey: string): string {
+    const column = mappings[fieldKey];
+
+    if (!column) {
+      return "";
+    }
+
+    return String(row[column] ?? "").trim();
+  }
+
+  function validateRow(row: CsvPreviewRow): ValidationResult {
+    const errors: string[] = [];
+
+    const name = getMappedValue(row, "name");
+    const sku = getMappedValue(row, "sku");
+    const price = getMappedValue(row, "price");
+    const stockQuantity = getMappedValue(row, "stock_quantity");
+    const status = getMappedValue(row, "status");
+
+    if (!name) {
+      errors.push("Missing product name.");
+    }
+
+    if (!sku) {
+      errors.push("Missing SKU.");
+    }
+
+    if (!price) {
+      errors.push("Missing price.");
+    } else {
+      const numericPrice = Number(price);
+
+      if (Number.isNaN(numericPrice)) {
+        errors.push("Invalid price.");
+      } else if (numericPrice < 0) {
+        errors.push("Price cannot be negative.");
+      }
+    }
+
+    if (stockQuantity) {
+      const numericStock = Number(stockQuantity);
+
+      if (!Number.isInteger(numericStock)) {
+        errors.push("Stock quantity must be an integer.");
+      } else if (numericStock < 0) {
+        errors.push("Stock quantity cannot be negative.");
+      }
+    }
+
+    if (status) {
+      const normalizedStatus = status.toLowerCase();
+
+      if (!VALID_STATUSES.includes(normalizedStatus)) {
+        errors.push(`Invalid product status "${status}".`);
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+    };
+  }
+
+  function getPreviewValidation() {
+    if (!uploadResult) {
+      return [];
+    }
+
+    const seenSkus = new Set<string>();
+
+    return uploadResult.previewRows.map((row) => {
+      const validation = validateRow(row);
+
+      const sku = getMappedValue(row, "sku");
+
+      if (sku) {
+        const normalizedSku = sku.toLowerCase();
+
+        if (seenSkus.has(normalizedSku)) {
+          validation.valid = false;
+
+          validation.errors.push("Duplicate SKU within uploaded file.");
+        }
+
+        seenSkus.add(normalizedSku);
+      }
+
+      return validation;
+    });
+  }
+
+  async function handleContinue() {
     if (step === 1) {
       if (!canContinueToMapping()) {
         return;
       }
 
-      setError('');
+      setError("");
       setStep(2);
       return;
     }
 
-    const mappingErrors = getMappingErrors();
+    if (step === 2) {
+      const mappingErrors = getMappingErrors();
 
-    if (mappingErrors.length > 0) {
-      setError(mappingErrors[0]);
+      if (mappingErrors.length > 0) {
+        setError(mappingErrors[0]);
+        return;
+      }
+
+      setError("");
+      setStep(3);
       return;
     }
 
-    setError('');
+    if (!uploadResult) {
+      return;
+    }
 
-    // Step 3 will be implemented in the next milestone.
+    const validationResults = getPreviewValidation();
+
+    const invalidRecords = validationResults.filter((result) => !result.valid);
+
+    if (invalidRecords.length > 0) {
+      setError(
+        "The preview contains invalid records. Please fix the CSV before importing.",
+      );
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setError("");
+
+      const result = await createImportJob(
+        uploadResult.fileId,
+        uploadResult.originalFileName,
+        mappings,
+      );
+
+      console.log("Import job created:", result.job);
+
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to create import job.",
+      );
+    } finally {
+      setUploading(false);
+    }
   }
+  const validationResults = step === 3 ? getPreviewValidation() : [];
+
+  const validPreviewCount = validationResults.filter(
+    (result) => result.valid,
+  ).length;
+
+  const invalidPreviewCount = validationResults.filter(
+    (result) => !result.valid,
+  ).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white shadow-xl">
         <div className="border-b border-neutral-200 px-6 py-5">
           <div className="flex items-center justify-between">
             <div>
@@ -338,66 +445,68 @@ function ImportModal({ onClose }: ImportModalProps) {
           <div className="mt-6 flex items-center gap-2">
             <div
               className={`flex items-center gap-2 ${
-                step >= 1
-                  ? 'text-neutral-900'
-                  : 'text-neutral-400'
+                step >= 1 ? "text-neutral-900" : "text-neutral-400"
               }`}
             >
               <span
                 className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
                   step >= 1
-                    ? 'bg-neutral-900 text-white'
-                    : 'border border-neutral-300'
+                    ? "bg-neutral-900 text-white"
+                    : "border border-neutral-300"
                 }`}
               >
                 1
               </span>
 
-              <span className="text-sm font-medium">
-                Browse File
-              </span>
+              <span className="text-sm font-medium">Browse File</span>
             </div>
 
             <div
               className={`h-px flex-1 ${
-                step >= 2
-                  ? 'bg-neutral-900'
-                  : 'bg-neutral-200'
+                step >= 2 ? "bg-neutral-900" : "bg-neutral-200"
               }`}
             />
 
             <div
               className={`flex items-center gap-2 ${
-                step >= 2
-                  ? 'text-neutral-900'
-                  : 'text-neutral-400'
+                step >= 2 ? "text-neutral-900" : "text-neutral-400"
               }`}
             >
               <span
                 className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
                   step >= 2
-                    ? 'bg-neutral-900 text-white'
-                    : 'border border-neutral-300'
+                    ? "bg-neutral-900 text-white"
+                    : "border border-neutral-300"
                 }`}
               >
                 2
               </span>
 
-              <span className="text-sm font-medium">
-                Map Columns
-              </span>
+              <span className="text-sm font-medium">Map Columns</span>
             </div>
 
-            <div className="h-px flex-1 bg-neutral-200" />
+            <div
+              className={`h-px flex-1 ${
+                step >= 3 ? "bg-neutral-900" : "bg-neutral-200"
+              }`}
+            />
 
-            <div className="flex items-center gap-2 text-neutral-400">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full border border-neutral-300 text-xs">
+            <div
+              className={`flex items-center gap-2 ${
+                step >= 3 ? "text-neutral-900" : "text-neutral-400"
+              }`}
+            >
+              <span
+                className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
+                  step >= 3
+                    ? "bg-neutral-900 text-white"
+                    : "border border-neutral-300"
+                }`}
+              >
                 3
               </span>
 
-              <span className="text-sm">
-                Preview
-              </span>
+              <span className="text-sm">Preview</span>
             </div>
           </div>
         </div>
@@ -410,13 +519,11 @@ function ImportModal({ onClose }: ImportModalProps) {
                   onDrop={handleDrop}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
-                  onClick={() =>
-                    fileInputRef.current?.click()
-                  }
+                  onClick={() => fileInputRef.current?.click()}
                   className={`cursor-pointer rounded-xl border-2 border-dashed p-12 text-center transition ${
                     isDragging
-                      ? 'border-neutral-900 bg-neutral-50'
-                      : 'border-neutral-300 hover:border-neutral-500 hover:bg-neutral-50'
+                      ? "border-neutral-900 bg-neutral-50"
+                      : "border-neutral-300 hover:border-neutral-500 hover:bg-neutral-50"
                   }`}
                 >
                   <input
@@ -436,8 +543,7 @@ function ImportModal({ onClose }: ImportModalProps) {
                   </h3>
 
                   <p className="mt-1 text-sm text-neutral-500">
-                    or click to browse files from your
-                    computer
+                    or click to browse files from your computer
                   </p>
 
                   <p className="mt-4 text-xs text-neutral-400">
@@ -462,9 +568,7 @@ function ImportModal({ onClose }: ImportModalProps) {
                         </p>
 
                         <p className="mt-1 text-sm text-neutral-500">
-                          {formatFileSize(
-                            uploadResult.fileSize,
-                          )}
+                          {formatFileSize(uploadResult.fileSize)}
                         </p>
                       </div>
 
@@ -484,16 +588,14 @@ function ImportModal({ onClose }: ImportModalProps) {
                     </h3>
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {uploadResult.headers.map(
-                        (header) => (
-                          <span
-                            key={header}
-                            className="rounded-full bg-neutral-100 px-3 py-1.5 text-sm text-neutral-700"
-                          >
-                            {header}
-                          </span>
-                        ),
-                      )}
+                      {uploadResult.headers.map((header) => (
+                        <span
+                          key={header}
+                          className="rounded-full bg-neutral-100 px-3 py-1.5 text-sm text-neutral-700"
+                        >
+                          {header}
+                        </span>
+                      ))}
                     </div>
                   </div>
 
@@ -512,40 +614,30 @@ function ImportModal({ onClose }: ImportModalProps) {
                       <table className="min-w-full text-left text-sm">
                         <thead className="bg-neutral-50">
                           <tr>
-                            {uploadResult.headers.map(
-                              (header) => (
-                                <th
-                                  key={header}
-                                  className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700"
-                                >
-                                  {header}
-                                </th>
-                              ),
-                            )}
+                            {uploadResult.headers.map((header) => (
+                              <th
+                                key={header}
+                                className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700"
+                              >
+                                {header}
+                              </th>
+                            ))}
                           </tr>
                         </thead>
 
                         <tbody className="divide-y divide-neutral-100">
-                          {uploadResult.previewRows.map(
-                            (
-                              row: CsvPreviewRow,
-                              index,
-                            ) => (
-                              <tr key={index}>
-                                {uploadResult.headers.map(
-                                  (header) => (
-                                    <td
-                                      key={header}
-                                      className="whitespace-nowrap px-4 py-3 text-neutral-600"
-                                    >
-                                      {row[header] ||
-                                        '-'}
-                                    </td>
-                                  ),
-                                )}
-                              </tr>
-                            ),
-                          )}
+                          {uploadResult.previewRows.map((row) => (
+                            <tr key={row.sku ?? Math.random()}>
+                              {uploadResult.headers.map((header) => (
+                                <td
+                                  key={header}
+                                  className="whitespace-nowrap px-4 py-3 text-neutral-600"
+                                >
+                                  {row[header] || "-"}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
@@ -569,8 +661,7 @@ function ImportModal({ onClose }: ImportModalProps) {
                 </h3>
 
                 <p className="mt-1 text-sm text-neutral-500">
-                  Match your CSV columns to the supported
-                  product fields.
+                  Match your CSV columns to the supported product fields.
                 </p>
               </div>
 
@@ -583,8 +674,7 @@ function ImportModal({ onClose }: ImportModalProps) {
 
                 <div className="divide-y divide-neutral-200">
                   {PRODUCT_FIELDS.map((field) => {
-                    const selectedColumn =
-                      mappings[field.key] ?? '';
+                    const selectedColumn = mappings[field.key] ?? "";
 
                     return (
                       <div
@@ -597,56 +687,41 @@ function ImportModal({ onClose }: ImportModalProps) {
                           </div>
 
                           <div className="mt-1 text-xs text-neutral-500">
-                            {field.required
-                              ? 'Required'
-                              : 'Optional'}
+                            {field.required ? "Required" : "Optional"}
                           </div>
                         </div>
 
                         <select
                           value={selectedColumn}
                           onChange={(event) =>
-                            handleMappingChange(
-                              field.key,
-                              event.target.value,
-                            )
+                            handleMappingChange(field.key, event.target.value)
                           }
                           className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2.5 text-sm text-neutral-700 outline-none focus:border-neutral-500"
                         >
-                          <option value="">
-                            Not mapped
-                          </option>
+                          <option value="">Not mapped</option>
 
-                          {uploadResult.headers.map(
-                            (header) => {
-                              const usedByAnotherField =
-                                Object.entries(
-                                  mappings,
-                                ).some(
-                                  ([key, column]) =>
-                                    key !== field.key &&
-                                    column === header,
-                                );
+                          {uploadResult.headers.map((header) => {
+                            const usedByAnotherField = Object.entries(
+                              mappings,
+                            ).some(
+                              ([key, column]) =>
+                                key !== field.key && column === header,
+                            );
 
-                              return (
-                                <option
-                                  key={header}
-                                  value={header}
-                                  disabled={
-                                    usedByAnotherField
-                                  }
-                                >
-                                  {header}
-                                </option>
-                              );
-                            },
-                          )}
+                            return (
+                              <option
+                                key={header}
+                                value={header}
+                                disabled={usedByAnotherField}
+                              >
+                                {header}
+                              </option>
+                            );
+                          })}
                         </select>
 
                         <div className="truncate text-sm text-neutral-600">
-                          {getSampleValue(
-                            selectedColumn,
-                          )}
+                          {getSampleValue(selectedColumn)}
                         </div>
                       </div>
                     );
@@ -661,16 +736,198 @@ function ImportModal({ onClose }: ImportModalProps) {
               )}
             </div>
           )}
+
+          {step === 3 && uploadResult && (
+            <div>
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-neutral-900">
+                  Preview Data
+                </h3>
+
+                <p className="mt-1 text-sm text-neutral-500">
+                  Review the first records before starting the import.
+                </p>
+              </div>
+
+              <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                  <p className="text-sm text-neutral-500">Preview Records</p>
+
+                  <p className="mt-1 text-2xl font-semibold text-neutral-900">
+                    {uploadResult.previewRows.length}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                  <p className="text-sm text-neutral-500">Valid Records</p>
+
+                  <p className="mt-1 text-2xl font-semibold text-green-700">
+                    {validPreviewCount}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                  <p className="text-sm text-neutral-500">Invalid Records</p>
+
+                  <p className="mt-1 text-2xl font-semibold text-red-700">
+                    {invalidPreviewCount}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mb-6 rounded-xl border border-neutral-200 bg-neutral-50 p-5">
+                <h4 className="font-medium text-neutral-900">
+                  Selected mappings
+                </h4>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {Object.entries(mappings)
+                    .filter(([, column]) => column)
+                    .map(([field, column]) => {
+                      const productField = PRODUCT_FIELDS.find(
+                        (item) => item.key === field,
+                      );
+
+                      return (
+                        <span
+                          key={field}
+                          className="rounded-full bg-white px-3 py-1.5 text-sm text-neutral-700 ring-1 ring-neutral-200"
+                        >
+                          {productField?.label ?? field}
+                          {" → "}
+                          {column}
+                        </span>
+                      );
+                    })}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-neutral-200">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-neutral-50">
+                    <tr>
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        Row
+                      </th>
+
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        Product Name
+                      </th>
+
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        SKU
+                      </th>
+
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        Price
+                      </th>
+
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        Stock
+                      </th>
+
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        Category
+                      </th>
+
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        Status
+                      </th>
+
+                      <th className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700">
+                        Validation
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-neutral-100">
+                    {uploadResult.previewRows.map((row, index) => {
+                      const validation = validationResults[index];
+
+                      return (
+                        <tr
+                          key={index}
+                          className={validation?.valid ? "" : "bg-red-50/40"}
+                        >
+                          <td className="px-4 py-4 text-neutral-500">
+                            {index + 2}
+                          </td>
+
+                          <td className="px-4 py-4 font-medium text-neutral-900">
+                            {getMappedValue(row, "name") || "-"}
+                          </td>
+
+                          <td className="px-4 py-4 text-neutral-600">
+                            {getMappedValue(row, "sku") || "-"}
+                          </td>
+
+                          <td className="px-4 py-4 text-neutral-600">
+                            {getMappedValue(row, "price") || "-"}
+                          </td>
+
+                          <td className="px-4 py-4 text-neutral-600">
+                            {getMappedValue(row, "stock_quantity") || "-"}
+                          </td>
+
+                          <td className="px-4 py-4 text-neutral-600">
+                            {getMappedValue(row, "category") || "-"}
+                          </td>
+
+                          <td className="px-4 py-4 text-neutral-600">
+                            {getMappedValue(row, "status") || "-"}
+                          </td>
+
+                          <td className="px-4 py-4">
+                            {validation?.valid ? (
+                              <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
+                                Valid
+                              </span>
+                            ) : (
+                              <div>
+                                <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
+                                  Invalid
+                                </span>
+
+                                <div className="mt-2 space-y-1">
+                                  {validation?.errors.map(
+                                    (validationError, errorIndex) => (
+                                      <p
+                                        key={errorIndex}
+                                        className="text-xs text-red-600"
+                                      >
+                                        {validationError}
+                                      </p>
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {uploadResult.previewRows.length === 0 && (
+                <div className="rounded-xl border border-neutral-200 p-8 text-center text-sm text-neutral-500">
+                  No data rows were found in the CSV.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between border-t border-neutral-200 px-6 py-4">
           <div>
-            {step === 2 && (
+            {step > 1 && (
               <button
                 type="button"
                 onClick={() => {
-                  setError('');
-                  setStep(1);
+                  setError("");
+
+                  setStep((current) => (current - 1) as ImportStep);
                 }}
                 className="rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
               >
@@ -694,12 +951,14 @@ function ImportModal({ onClose }: ImportModalProps) {
                 uploading ||
                 (step === 1
                   ? !canContinueToMapping()
-                  : !canContinueFromMapping())
+                  : step === 2
+                    ? !canContinueFromMapping()
+                    : false)
               }
               onClick={handleContinue}
               className="rounded-lg bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Continue
+              {step === 3 ? "Create Import Job" : "Continue"}
             </button>
           </div>
         </div>
