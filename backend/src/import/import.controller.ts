@@ -6,6 +6,7 @@ import {
   MessageEvent,
   Param,
   Post,
+  Query,
   Sse,
   UploadedFile,
   UseInterceptors,
@@ -95,6 +96,15 @@ export class ImportController {
   ) {
     return this.importService.createImportJob(
       dto,
+    );
+  }
+
+  @Get("jobs")
+  async getImportJobs(
+    @Query("limit") limit?: string,
+  ) {
+    return this.importService.getImportJobs(
+      limit ? Number(limit) : 50,
     );
   }
 

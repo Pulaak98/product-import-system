@@ -4,27 +4,35 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-} from '@nestjs/common';
-import { mkdir, unlink, writeFile } from 'fs/promises';
-import { randomUUID } from 'crypto';
-import { join } from 'path';
-import { Kysely } from 'kysely';
+} from "@nestjs/common";
 
-import { CsvService } from './csv/csv.service';
-import { CreateImportJobDto } from './dto/create-import-job.dto';
+import {
+  mkdir,
+  unlink,
+  writeFile,
+} from "fs/promises";
 
-import { DATABASE } from '../database/database.module';
-import { Database } from '../database/database.types';
+import { randomUUID } from "crypto";
+import { join } from "path";
+import { Kysely } from "kysely";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+import { CsvService } from "./csv/csv.service";
+import { CreateImportJobDto } from "./dto/create-import-job.dto";
+
+import { DATABASE } from "../database/database.module";
+import { Database } from "../database/database.types";
+
+const MAX_FILE_SIZE =
+  10 * 1024 * 1024;
 
 @Injectable()
 export class ImportService {
-  private readonly uploadDirectory = join(
-    process.cwd(),
-    'storage',
-    'imports',
-  );
+  private readonly uploadDirectory =
+    join(
+      process.cwd(),
+      "storage",
+      "imports",
+    );
 
   constructor(
     private readonly csvService: CsvService,
@@ -33,64 +41,83 @@ export class ImportService {
     private readonly db: Kysely<Database>,
   ) {}
 
-  async uploadCsv(file: Express.Multer.File) {
+  async uploadCsv(
+    file: Express.Multer.File,
+  ) {
     if (!file) {
       throw new BadRequestException(
-        'A CSV file is required.',
+        "A CSV file is required.",
       );
     }
 
     if (file.size === 0) {
       throw new BadRequestException(
-        'The CSV file is empty.',
+        "The CSV file is empty.",
       );
     }
 
     if (file.size > MAX_FILE_SIZE) {
       throw new BadRequestException(
-        'The CSV file must not exceed 10 MB.',
+        "The CSV file must not exceed 10 MB.",
       );
     }
 
-    const extension = file.originalname
-      .toLowerCase()
-      .split('.')
-      .pop();
+    const extension =
+      file.originalname
+        .toLowerCase()
+        .split(".")
+        .pop();
 
-    if (extension !== 'csv') {
+    if (extension !== "csv") {
       throw new BadRequestException(
-        'Only CSV files are supported.',
+        "Only CSV files are supported.",
       );
     }
 
-    await mkdir(this.uploadDirectory, {
-      recursive: true,
-    });
-
-    const fileId = randomUUID();
-
-    const storedFileName = `${fileId}.csv`;
-
-    const filePath = join(
+    await mkdir(
       this.uploadDirectory,
-      storedFileName,
+      {
+        recursive: true,
+      },
     );
 
-    await writeFile(filePath, file.buffer);
+    const fileId =
+      randomUUID();
+
+    const storedFileName =
+      `${fileId}.csv`;
+
+    const filePath =
+      join(
+        this.uploadDirectory,
+        storedFileName,
+      );
+
+    await writeFile(
+      filePath,
+      file.buffer,
+    );
 
     try {
       const preview =
-        await this.csvService.readPreview(filePath);
+        await this.csvService.readPreview(
+          filePath,
+        );
 
       return {
         fileId,
-        originalFileName: file.originalname,
+        originalFileName:
+          file.originalname,
         fileSize: file.size,
-        headers: preview.headers,
-        previewRows: preview.rows,
+        headers:
+          preview.headers,
+        previewRows:
+          preview.rows,
       };
     } catch (error) {
-      await this.removeFile(filePath);
+      await this.removeFile(
+        filePath,
+      );
 
       throw error;
     }
@@ -99,10 +126,11 @@ export class ImportService {
   async createImportJob(
     dto: CreateImportJobDto,
   ) {
-    const filePath = join(
-      this.uploadDirectory,
-      `${dto.fileId}.csv`,
-    );
+    const filePath =
+      join(
+        this.uploadDirectory,
+        `${dto.fileId}.csv`,
+      );
 
     let preview;
 
@@ -114,24 +142,30 @@ export class ImportService {
         );
     } catch {
       throw new NotFoundException(
-        'Uploaded CSV file could not be found.',
+        "Uploaded CSV file could not be found.",
       );
     }
 
-    if (preview.rows.length === 0) {
+    if (
+      preview.rows.length === 0
+    ) {
       throw new BadRequestException(
-        'The CSV file does not contain any data rows.',
+        "The CSV file does not contain any data rows.",
       );
     }
 
     const requiredMappings = [
-      'name',
-      'sku',
-      'price',
+      "name",
+      "sku",
+      "price",
     ];
 
-    for (const field of requiredMappings) {
-      if (!dto.columnMappings[field]) {
+    for (
+      const field of requiredMappings
+    ) {
+      if (
+        !dto.columnMappings[field]
+      ) {
         throw new BadRequestException(
           `${field} must be mapped before creating the import job.`,
         );
@@ -139,148 +173,287 @@ export class ImportService {
     }
 
     const mappedColumns =
-      Object.values(dto.columnMappings);
+      Object.values(
+        dto.columnMappings,
+      );
 
-    const uniqueColumns = new Set(mappedColumns);
+    const uniqueColumns =
+      new Set(mappedColumns);
 
     if (
-      mappedColumns.length !== uniqueColumns.size
+      mappedColumns.length !==
+      uniqueColumns.size
     ) {
       throw new BadRequestException(
-        'A CSV column can only be mapped once.',
+        "A CSV column can only be mapped once.",
       );
     }
 
     const invalidMappings =
       mappedColumns.some(
         (column) =>
-          !preview.headers.includes(column),
+          !preview.headers.includes(
+            column,
+          ),
       );
 
     if (invalidMappings) {
       throw new BadRequestException(
-        'One or more mapped CSV columns do not exist.',
+        "One or more mapped CSV columns do not exist.",
       );
     }
 
-    const existingJob = await this.db
-      .selectFrom('import_jobs')
-      .select('id')
-      .where(
-        'original_file_name',
-        '=',
-        dto.originalFileName,
-      )
-      .where(
-        'status',
-        'in',
-        ['pending', 'processing'],
-      )
-      .executeTakeFirst();
+    const existingJob =
+      await this.db
+        .selectFrom("import_jobs")
+        .select("id")
+        .where(
+          "original_file_name",
+          "=",
+          dto.originalFileName,
+        )
+        .where(
+          "status",
+          "in",
+          [
+            "pending",
+            "processing",
+          ],
+        )
+        .executeTakeFirst();
 
     if (existingJob) {
       throw new ConflictException(
-        'An import job for this file is already processing.',
+        "An import job for this file is already processing.",
       );
     }
 
-    const job = await this.db
-      .insertInto('import_jobs')
-      .values({
-        user_id: null,
-        original_file_name:
-          dto.originalFileName,
-        stored_file_location: filePath,
-        import_type: 'product_csv',
-        status: 'pending',
-        total_records: preview.rows.length,
-        processed_records: 0,
-        successful_records: 0,
-        failed_records: 0,
-        progress_percentage: 0,
-        column_mappings: dto.columnMappings,
-        started_at: null,
-        completed_at: null,
-        failure_message: null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const job =
+      await this.db
+        .insertInto("import_jobs")
+        .values({
+          user_id: null,
+
+          original_file_name:
+            dto.originalFileName,
+
+          stored_file_location:
+            filePath,
+
+          import_type:
+            "product_csv",
+
+          status:
+            "pending",
+
+          total_records:
+            preview.rows.length,
+
+          processed_records:
+            0,
+
+          successful_records:
+            0,
+
+          failed_records:
+            0,
+
+          progress_percentage:
+            0,
+
+          column_mappings:
+            dto.columnMappings,
+
+          started_at: null,
+
+          completed_at: null,
+
+          failure_message:
+            null,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
 
     return {
-      message: 'Import job created successfully.',
+      message:
+        "Import job created successfully.",
+
       job,
     };
   }
-async getImportProgress(
-  jobId: number,
-) {
-  const job = await this.db
-    .selectFrom('import_jobs')
-    .select([
-      'id',
-      'original_file_name',
-      'status',
-      'total_records',
-      'processed_records',
-      'successful_records',
-      'failed_records',
-      'progress_percentage',
-      'created_at',
-      'started_at',
-      'completed_at',
-    ])
-    .where('id', '=', jobId)
-    .executeTakeFirst();
 
-  if (!job) {
-    throw new NotFoundException(
-      'Import job not found.',
+  async getImportJobs(
+    requestedLimit: number,
+  ) {
+    const limit =
+      Number.isFinite(
+        requestedLimit,
+      )
+        ? Math.min(
+            Math.max(
+              Math.floor(
+                requestedLimit,
+              ),
+              1,
+            ),
+            100,
+          )
+        : 50;
+
+    const jobs =
+      await this.db
+        .selectFrom("import_jobs")
+        .select([
+          "id",
+          "original_file_name",
+          "status",
+          "total_records",
+          "processed_records",
+          "successful_records",
+          "failed_records",
+          "progress_percentage",
+          "created_at",
+          "started_at",
+          "completed_at",
+          "updated_at",
+          "failure_message",
+        ])
+        .orderBy(
+          "created_at",
+          "desc",
+        )
+        .limit(limit)
+        .execute();
+
+    return jobs.map(
+      (job) => ({
+        jobId: job.id,
+
+        fileName:
+          job.original_file_name,
+
+        status:
+          job.status,
+
+        totalRecords:
+          job.total_records,
+
+        processedRecords:
+          job.processed_records,
+
+        successfulRecords:
+          job.successful_records,
+
+        failedRecords:
+          job.failed_records,
+
+        progressPercentage:
+          Number(
+            job.progress_percentage,
+          ),
+
+        createdAt:
+          job.created_at,
+
+        startedAt:
+          job.started_at,
+
+        completedAt:
+          job.completed_at,
+
+        updatedAt:
+          job.updated_at,
+
+        failureMessage:
+          job.failure_message,
+      }),
     );
   }
 
-  return {
-    jobId: job.id,
+  async getImportProgress(
+    jobId: number,
+  ) {
+    const job =
+      await this.db
+        .selectFrom("import_jobs")
+        .select([
+          "id",
+          "original_file_name",
+          "status",
+          "total_records",
+          "processed_records",
+          "successful_records",
+          "failed_records",
+          "progress_percentage",
+          "created_at",
+          "started_at",
+          "completed_at",
+          "updated_at",
+          "failure_message",
+        ])
+        .where(
+          "id",
+          "=",
+          jobId,
+        )
+        .executeTakeFirst();
 
-    fileName:
-      job.original_file_name,
+    if (!job) {
+      throw new NotFoundException(
+        "Import job not found.",
+      );
+    }
 
-    status:
-      job.status,
+    return {
+      jobId: job.id,
 
-    totalRecords:
-      job.total_records,
+      fileName:
+        job.original_file_name,
 
-    processedRecords:
-      job.processed_records,
+      status:
+        job.status,
 
-    successfulRecords:
-      job.successful_records,
+      totalRecords:
+        job.total_records,
 
-    failedRecords:
-      job.failed_records,
+      processedRecords:
+        job.processed_records,
 
-    progressPercentage:
-      Number(
-        job.progress_percentage,
-      ),
+      successfulRecords:
+        job.successful_records,
 
-    createdAt:
-      job.created_at,
+      failedRecords:
+        job.failed_records,
 
-    startedAt:
-      job.started_at,
+      progressPercentage:
+        Number(
+          job.progress_percentage,
+        ),
 
-    completedAt:
-      job.completed_at,
-  };
-}
+      createdAt:
+        job.created_at,
 
+      startedAt:
+        job.started_at,
+
+      completedAt:
+        job.completed_at,
+
+      updatedAt:
+        job.updated_at,
+
+      failureMessage:
+        job.failure_message,
+    };
+  }
 
   private async removeFile(
     filePath: string,
   ) {
     try {
-      await unlink(filePath);
+      await unlink(
+        filePath,
+      );
     } catch {
       // Ignore cleanup errors.
     }

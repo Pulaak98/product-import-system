@@ -1,160 +1,162 @@
 import type {
   CsvUploadResponse,
   CreateImportJobResponse,
-  ImportProgress,
+  ImportJobProgress,
 } from "../types/import";
 
-const API_URL = "http://localhost:3000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ??
+  "http://localhost:3000";
 
 export async function uploadCsv(
   file: File,
 ): Promise<CsvUploadResponse> {
-  const formData = new FormData();
+  const formData =
+    new FormData();
 
-  formData.append("file", file);
-
-  const response = await fetch(
-    `${API_URL}/imports/upload`,
-    {
-      method: "POST",
-      body: formData,
-    },
+  formData.append(
+    "file",
+    file,
   );
 
-  const data = await response.json();
+  const response =
+    await fetch(
+      `${API_BASE_URL}/imports/upload`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
 
   if (!response.ok) {
+    const message =
+      await getErrorMessage(
+        response,
+      );
+
     throw new Error(
-      data.message ||
+      message ||
         "Failed to upload CSV file.",
     );
   }
 
-  return data;
+  return response.json();
 }
 
 export async function createImportJob(
   fileId: string,
   originalFileName: string,
-  columnMappings: Record<string, string>,
+  columnMappings: Record<
+    string,
+    string
+  >,
 ): Promise<CreateImportJobResponse> {
-  const response = await fetch(
-    `${API_URL}/imports/jobs`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        fileId,
-        originalFileName,
-        columnMappings,
-      }),
-    },
-  );
+  const response =
+    await fetch(
+      `${API_BASE_URL}/imports/jobs`,
+      {
+        method: "POST",
 
-  const data = await response.json();
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          fileId,
+          originalFileName,
+          columnMappings,
+        }),
+      },
+    );
 
   if (!response.ok) {
+    const message =
+      await getErrorMessage(
+        response,
+      );
+
     throw new Error(
-      data.message ||
+      message ||
         "Failed to create import job.",
     );
   }
 
-  return data;
+  return response.json();
+}
+
+export async function getImportJobs(): Promise<
+  ImportJobProgress[]
+> {
+  const response =
+    await fetch(
+      `${API_BASE_URL}/imports/jobs?limit=50`,
+    );
+
+  if (!response.ok) {
+    const message =
+      await getErrorMessage(
+        response,
+      );
+
+    throw new Error(
+      message ||
+        "Failed to load import jobs.",
+    );
+  }
+
+  return response.json();
 }
 
 export async function getImportProgress(
   jobId: number,
-): Promise<ImportProgress> {
-  const response = await fetch(
-    `${API_URL}/imports/${jobId}/progress`,
-  );
-
-  const data = await response.json();
+): Promise<ImportJobProgress> {
+  const response =
+    await fetch(
+      `${API_BASE_URL}/imports/${jobId}/progress`,
+    );
 
   if (!response.ok) {
+    const message =
+      await getErrorMessage(
+        response,
+      );
+
     throw new Error(
-      data.message ||
-        "Failed to get import progress.",
+      message ||
+        "Failed to load import progress.",
     );
   }
 
-  return data;
+  return response.json();
 }
 
-export function subscribeToImportProgress(
-  jobId: number,
-  onProgress: (progress: ImportProgress) => void,
-  onError?: () => void,
-): () => void {
-  const eventSource = new EventSource(
-    `${API_URL}/imports/${jobId}/progress/stream`,
-  );
+async function getErrorMessage(
+  response: Response,
+): Promise<string> {
+  try {
+    const body =
+      await response.json();
 
-  const handleEvent = (event: Event) => {
-    try {
-      const messageEvent =
-        event as MessageEvent;
-
-      const progress =
-        JSON.parse(
-          messageEvent.data,
-        ) as ImportProgress;
-
-      onProgress(progress);
-
-      if (
-        progress.status === "completed" ||
-        progress.status ===
-          "completed_with_errors" ||
-        progress.status === "failed"
-      ) {
-        eventSource.close();
-      }
-    } catch {
-      // Ignore malformed SSE messages.
-    }
-  };
-
-  /*
-   * Listen to all named import events.
-   */
-  const eventTypes = [
-    "import.queued",
-    "import.started",
-    "import.progress",
-    "import.record_failed",
-    "import.completed",
-    "import.failed",
-  ];
-
-  eventTypes.forEach((eventType) => {
-    eventSource.addEventListener(
-      eventType,
-      handleEvent,
-    );
-  });
-
-  /*
-   * Also support normal unnamed SSE messages.
-   */
-  eventSource.onmessage = handleEvent;
-
-  eventSource.onerror = () => {
-    eventSource.close();
-    onError?.();
-  };
-
-  return () => {
-    eventTypes.forEach((eventType) => {
-      eventSource.removeEventListener(
-        eventType,
-        handleEvent,
+    if (
+      Array.isArray(
+        body?.message,
+      )
+    ) {
+      return body.message.join(
+        ", ",
       );
-    });
+    }
 
-    eventSource.close();
-  };
+    if (
+      typeof body?.message ===
+      "string"
+    ) {
+      return body.message;
+    }
+  } catch {
+    // Ignore invalid JSON.
+  }
+
+  return "";
 }

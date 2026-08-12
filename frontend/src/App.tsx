@@ -1,46 +1,113 @@
-import { useEffect, useState } from 'react';
-import ProductTable from './components/ProductTable';
-import ImportModal from './components/ImportModal';
-import { getProducts } from './services/product.service';
-import type { Product } from './types/product';
+import {
+  useEffect,
+  useState,
+} from "react";
+
+import ProductTable from "./components/ProductTable";
+import ImportModal from "./components/ImportModal";
+import ImportJobsPanel from "./components/ImportJobsPanel";
+
+import {
+  getProducts,
+} from "./services/product.service";
+
+import type {
+  Product,
+} from "./types/product";
 
 function App() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
+  const [
+    products,
+    setProducts,
+  ] =
+    useState<Product[]>([]);
 
-  const [page, setPage] = useState(1);
-  const [limit] = useState(10);
+  const [
+    search,
+    setSearch,
+  ] =
+    useState("");
 
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
+  const [
+    status,
+    setStatus,
+  ] =
+    useState("");
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [
+    page,
+    setPage,
+  ] =
+    useState(1);
 
-  const [showImportModal, setShowImportModal] =
+  const [limit] =
+    useState(10);
+
+  const [
+    total,
+    setTotal,
+  ] =
+    useState(0);
+
+  const [
+    totalPages,
+    setTotalPages,
+  ] =
+    useState(0);
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState("");
+
+  const [
+    showImportModal,
+    setShowImportModal,
+  ] =
+    useState(false);
+
+  const [
+    showImportJobs,
+    setShowImportJobs,
+  ] =
     useState(false);
 
   async function loadProducts() {
     try {
       setLoading(true);
-      setError('');
+      setError("");
 
-      const response = await getProducts({
-        page,
-        limit,
-        search,
-        status,
-      });
+      const response =
+        await getProducts({
+          page,
+          limit,
+          search,
+          status,
+        });
 
-      setProducts(response.data);
-      setTotal(response.pagination.total);
-      setTotalPages(response.pagination.totalPages);
+      setProducts(
+        response.data,
+      );
+
+      setTotal(
+        response.pagination.total,
+      );
+
+      setTotalPages(
+        response.pagination.totalPages,
+      );
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : 'Failed to load products.',
+          : "Failed to load products.",
       );
     } finally {
       setLoading(false);
@@ -48,19 +115,29 @@ function App() {
   }
 
   useEffect(() => {
-    loadProducts();
-  }, [page, status]);
+    void loadProducts();
+  }, [
+    page,
+    status,
+  ]);
 
-  function handleSearch(event: React.FormEvent) {
+  function handleSearch(
+    event: React.FormEvent,
+  ) {
     event.preventDefault();
+
     setPage(1);
-    loadProducts();
+
+    void loadProducts();
   }
 
   function handleStatusChange(
     event: React.ChangeEvent<HTMLSelectElement>,
   ) {
-    setStatus(event.target.value);
+    setStatus(
+      event.target.value,
+    );
+
     setPage(1);
   }
 
@@ -78,13 +155,27 @@ function App() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowImportModal(true)}
-            className="rounded-lg bg-neutral-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800"
-          >
-            Import Products
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                setShowImportJobs(true)
+              }
+              className="rounded-lg border border-neutral-300 bg-white px-5 py-3 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+            >
+              Import Progress
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowImportModal(true)
+              }
+              className="rounded-lg bg-neutral-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800"
+            >
+              Import Products
+            </button>
+          </div>
         </div>
 
         <div className="mb-6 rounded-xl border border-neutral-200 bg-white p-4">
@@ -96,7 +187,9 @@ function App() {
               type="text"
               value={search}
               onChange={(event) =>
-                setSearch(event.target.value)
+                setSearch(
+                  event.target.value,
+                )
               }
               placeholder="Search products..."
               className="flex-1 rounded-lg border border-neutral-300 px-4 py-2.5 text-sm outline-none focus:border-neutral-500"
@@ -104,13 +197,26 @@ function App() {
 
             <select
               value={status}
-              onChange={handleStatusChange}
+              onChange={
+                handleStatusChange
+              }
               className="rounded-lg border border-neutral-300 px-4 py-2.5 text-sm outline-none focus:border-neutral-500"
             >
-              <option value="">All statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="draft">Draft</option>
+              <option value="">
+                All statuses
+              </option>
+
+              <option value="active">
+                Active
+              </option>
+
+              <option value="inactive">
+                Inactive
+              </option>
+
+              <option value="draft">
+                Draft
+              </option>
             </select>
 
             <button
@@ -134,12 +240,14 @@ function App() {
           </div>
         ) : (
           <>
-            <ProductTable products={products} />
+            <ProductTable
+              products={products}
+            />
 
             <div className="mt-5 flex flex-col gap-3 text-sm text-neutral-600 sm:flex-row sm:items-center sm:justify-between">
               <p>
                 {total === 0
-                  ? 'No products'
+                  ? "No products"
                   : `Showing ${products.length} of ${total} products`}
               </p>
 
@@ -148,7 +256,10 @@ function App() {
                   type="button"
                   disabled={page <= 1}
                   onClick={() =>
-                    setPage((current) => current - 1)
+                    setPage(
+                      (current) =>
+                        current - 1,
+                    )
                   }
                   className="rounded-lg border border-neutral-300 bg-white px-4 py-2 disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -156,15 +267,23 @@ function App() {
                 </button>
 
                 <span className="px-2">
-                  Page {totalPages === 0 ? 0 : page} of{' '}
-                  {totalPages}
+                  Page{" "}
+                  {totalPages === 0
+                    ? 0
+                    : page}{" "}
+                  of {totalPages}
                 </span>
 
                 <button
                   type="button"
-                  disabled={page >= totalPages}
+                  disabled={
+                    page >= totalPages
+                  }
                   onClick={() =>
-                    setPage((current) => current + 1)
+                    setPage(
+                      (current) =>
+                        current + 1,
+                    )
                   }
                   className="rounded-lg border border-neutral-300 bg-white px-4 py-2 disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -178,7 +297,21 @@ function App() {
 
       {showImportModal && (
         <ImportModal
-          onClose={() => setShowImportModal(false)}
+          onClose={() =>
+            setShowImportModal(
+              false,
+            )
+          }
+        />
+      )}
+
+      {showImportJobs && (
+        <ImportJobsPanel
+          onClose={() =>
+            setShowImportJobs(
+              false,
+            )
+          }
         />
       )}
     </main>

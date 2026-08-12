@@ -1,37 +1,11 @@
 import { useEffect, useState } from "react";
+import { getImportProgress } from "../services/import.service";
 
-import {
-  getImportProgress,
-  subscribeToImportProgress,
-} from "../services/import.service";
-
-import type { ImportProgress } from "../types/import";
+import type { ImportJobProgress } from "../types/import";
 
 interface ImportProgressPanelProps {
   jobId: number;
   onClose: () => void;
-}
-
-function getStatusLabel(status: string) {
-  switch (status) {
-    case "pending":
-      return "Waiting to start";
-
-    case "processing":
-      return "Importing products";
-
-    case "completed":
-      return "Import completed";
-
-    case "completed_with_errors":
-      return "Completed with errors";
-
-    case "failed":
-      return "Import failed";
-
-    default:
-      return status;
-  }
 }
 
 function ImportProgressPanel({
@@ -39,375 +13,426 @@ function ImportProgressPanel({
   onClose,
 }: ImportProgressPanelProps) {
   const [progress, setProgress] =
-    useState<ImportProgress | null>(null);
+    useState<ImportJobProgress | null>(null);
 
   const [loading, setLoading] = useState(true);
 
-  const [connectionError, setConnectionError] =
-    useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    let mounted = true;
+    let cancelled = false;
 
-    setLoading(true);
-    setConnectionError(false);
-    setProgress(null);
-
-    /*
-     * Subscribe first so we don't miss a live event
-     * while fetching the current state.
-     */
-    const cleanup = subscribeToImportProgress(
-      jobId,
-      (data) => {
-        if (!mounted) {
-          return;
-        }
-
-        setProgress(data);
-        setLoading(false);
-        setConnectionError(false);
-      },
-      () => {
-        if (!mounted) {
-          return;
-        }
-
-        setConnectionError(true);
-        setLoading(false);
-      },
-    );
-
-    /*
-     * Fetch the current database state immediately.
-     *
-     * This is important because the SSE Subject only
-     * delivers events that happen after subscription.
-     */
-    async function loadCurrentProgress() {
+    async function loadProgress() {
       try {
-        const currentProgress =
-          await getImportProgress(jobId);
+        const result = await getImportProgress(jobId);
 
-        if (!mounted) {
-          return;
+        if (!cancelled) {
+          setProgress(result);
+          setError("");
         }
-
-        setProgress(currentProgress);
-        setLoading(false);
-        setConnectionError(false);
-      } catch {
-        if (!mounted) {
-          return;
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load import progress.",
+          );
         }
-
-        setLoading(false);
-        setConnectionError(true);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
-    void loadCurrentProgress();
+    void loadProgress();
 
     return () => {
-      mounted = false;
-      cleanup();
+      cancelled = true;
     };
   }, [jobId]);
 
-  const percentage =
-    progress?.progressPercentage ?? 0;
+  /*
+   * Poll the API as a reliable fallback.
+   *
+   * This prevents the progress modal from getting stuck
+   * if an SSE event is missed.
+   */
+  useEffect(() => {
+    if (!progress) {
+      return;
+    }
 
-  const isCompleted =
-    progress?.status === "completed";
+    const isTerminal =
+      progress.status === "completed" ||
+      progress.status === "completed_with_errors" ||
+      progress.status === "failed";
 
-  const completedWithErrors =
-    progress?.status ===
-    "completed_with_errors";
+    if (isTerminal) {
+      return;
+    }
 
-  const failed =
-    progress?.status === "failed";
+    const interval = window.setInterval(async () => {
+      try {
+        const result = await getImportProgress(jobId);
 
-  const isFinished =
-    isCompleted ||
-    completedWithErrors ||
-    failed;
+        setProgress(result);
+        setError("");
+      } catch {
+        // Keep the existing progress visible if polling fails.
+      }
+    }, 1000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [jobId, progress?.status]);
+
+  /*
+   * SSE provides immediate updates.
+   * Polling above acts as a reliable fallback.
+   */
+  useEffect(() => {
+    if (!progress) {
+      return;
+    }
+
+    const isTerminal =
+      progress.status === "completed" ||
+      progress.status === "completed_with_errors" ||
+      progress.status === "failed";
+
+    if (isTerminal) {
+      return;
+    }
+
+    const apiBaseUrl =
+      import.meta.env.VITE_API_URL ??
+      "http://localhost:3000";
+
+    const eventSource = new EventSource(
+      `${apiBaseUrl}/imports/${jobId}/progress/stream`,
+    );
+
+    const updateProgress = (
+      event: MessageEvent,
+    ) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (
+          data &&
+          typeof data === "object"
+        ) {
+          setProgress(
+            (current) => ({
+              ...(current ?? {}),
+              ...data,
+            }) as ImportJobProgress,
+          );
+        }
+      } catch {
+        // Ignore malformed SSE messages.
+      }
+    };
+
+    eventSource.addEventListener(
+      "import.queued",
+      updateProgress,
+    );
+
+    eventSource.addEventListener(
+      "import.started",
+      updateProgress,
+    );
+
+    eventSource.addEventListener(
+      "import.progress",
+      updateProgress,
+    );
+
+    eventSource.addEventListener(
+      "import.record_failed",
+      updateProgress,
+    );
+
+    eventSource.addEventListener(
+      "import.completed",
+      updateProgress,
+    );
+
+    eventSource.addEventListener(
+      "import.failed",
+      updateProgress,
+    );
+
+    eventSource.onerror = () => {
+      /*
+       * Do nothing.
+       *
+       * Browser will reconnect automatically and
+       * polling continues to keep the UI synchronized.
+       */
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [jobId, progress?.status]);
+
+  function getStatusLabel(status: string) {
+    switch (status) {
+      case "pending":
+        return "Waiting to start";
+
+      case "processing":
+        return "Processing";
+
+      case "completed":
+        return "Completed";
+
+      case "completed_with_errors":
+        return "Completed with errors";
+
+      case "failed":
+        return "Failed";
+
+      default:
+        return status;
+    }
+  }
+
+  function getStatusClass(status: string) {
+    switch (status) {
+      case "completed":
+        return "bg-green-100 text-green-700 ring-1 ring-green-200";
+
+      case "completed_with_errors":
+        return "bg-orange-100 text-orange-700 ring-1 ring-orange-200";
+
+      case "failed":
+        return "bg-red-100 text-red-700 ring-1 ring-red-200";
+
+      case "processing":
+        return "bg-blue-100 text-blue-700 ring-1 ring-blue-200";
+
+      case "pending":
+        return "bg-amber-100 text-amber-700 ring-1 ring-amber-200";
+
+      default:
+        return "bg-neutral-100 text-neutral-700";
+    }
+  }
+
+  function getProgressBarClass(status: string) {
+    switch (status) {
+      case "completed":
+        return "bg-gradient-to-r from-green-500 to-emerald-400";
+
+      case "completed_with_errors":
+        return "bg-gradient-to-r from-orange-500 to-amber-400";
+
+      case "failed":
+        return "bg-gradient-to-r from-red-500 to-rose-400";
+
+      case "processing":
+        return "bg-gradient-to-r from-blue-500 to-cyan-400";
+
+      case "pending":
+        return "bg-gradient-to-r from-amber-400 to-yellow-300";
+
+      default:
+        return "bg-neutral-400";
+    }
+  }
+
+  function getProgressBackgroundClass(status: string) {
+    switch (status) {
+      case "completed":
+        return "bg-green-50";
+
+      case "completed_with_errors":
+        return "bg-orange-50";
+
+      case "failed":
+        return "bg-red-50";
+
+      case "processing":
+        return "bg-blue-50";
+
+      default:
+        return "bg-neutral-100";
+    }
+  }
+
+  const percentage = progress
+    ? Math.min(
+        Math.max(progress.progressPercentage, 0),
+        100,
+      )
+    : 0;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-        {/* Header */}
-        <div className="border-b border-neutral-200 px-7 py-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-neutral-900 text-white">
-                  <svg
-                    className="h-5 w-5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"
-                    />
-                  </svg>
-                </div>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-neutral-200 px-6 py-5">
+          <div>
+            <h2 className="text-xl font-semibold text-neutral-900">
+              Import Progress
+            </h2>
 
-                <div>
-                  <h2 className="text-xl font-semibold tracking-tight text-neutral-900">
-                    Import Progress
-                  </h2>
-
-                  <p className="mt-1 text-sm text-neutral-500">
-                    Job #{jobId}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Close button is ALWAYS available */}
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl p-2 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700"
-              aria-label="Close import progress"
-            >
-              <svg
-                className="h-5 w-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 6l12 12M18 6 6 18"
-                />
-              </svg>
-            </button>
+            <p className="mt-1 text-sm text-neutral-500">
+              Job #{jobId}
+            </p>
           </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-xl text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700"
+          >
+            ×
+          </button>
         </div>
 
-        <div className="space-y-7 p-7">
-          {/* Status */}
-          <div className="flex items-center justify-between gap-4">
+        <div className="p-6">
+          {loading && (
+            <div className="py-10 text-center text-sm text-neutral-500">
+              Loading import progress...
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
+          {progress && !loading && (
             <div>
-              <p className="text-sm font-medium text-neutral-500">
-                Current status
-              </p>
-
-              <p className="mt-1 text-lg font-semibold text-neutral-900">
-                {loading && !progress
-                  ? "Loading import status..."
-                  : progress
-                    ? getStatusLabel(progress.status)
-                    : "Unable to load status"}
-              </p>
-            </div>
-
-            <div
-              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${
-                isCompleted
-                  ? "bg-green-100 text-green-700"
-                  : completedWithErrors
-                    ? "bg-amber-100 text-amber-700"
-                    : failed
-                      ? "bg-red-100 text-red-700"
-                      : progress?.status === "processing"
-                        ? "bg-neutral-900 text-white"
-                        : "bg-neutral-100 text-neutral-700"
-              }`}
-            >
-              {progress
-                ? getStatusLabel(progress.status)
-                : "Loading"}
-            </div>
-          </div>
-
-          {/* Progress */}
-          <div>
-            <div className="mb-3 flex items-end justify-between">
-              <div>
-                <p className="text-sm font-medium text-neutral-500">
-                  Overall progress
-                </p>
-              </div>
-
-              <span className="text-2xl font-bold text-neutral-900">
-                {percentage}%
-              </span>
-            </div>
-
-            <div className="h-3 overflow-hidden rounded-full bg-neutral-100">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  failed
-                    ? "bg-red-500"
-                    : completedWithErrors
-                      ? "bg-amber-500"
-                      : "bg-neutral-900"
-                }`}
-                style={{
-                  width: `${Math.min(
-                    100,
-                    Math.max(0, percentage),
-                  )}%`,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Statistics */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">
-                Total
-              </p>
-
-              <p className="mt-2 text-2xl font-semibold text-neutral-900">
-                {progress?.totalRecords ?? "-"}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">
-                Processed
-              </p>
-
-              <p className="mt-2 text-2xl font-semibold text-neutral-900">
-                {progress?.processedRecords ?? "-"}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-green-100 bg-green-50 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-green-600">
-                Successful
-              </p>
-
-              <p className="mt-2 text-2xl font-semibold text-green-700">
-                {progress?.successfulRecords ?? "-"}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-red-100 bg-red-50 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-red-600">
-                Failed
-              </p>
-
-              <p className="mt-2 text-2xl font-semibold text-red-700">
-                {progress?.failedRecords ?? "-"}
-              </p>
-            </div>
-          </div>
-
-          {/* Loading */}
-          {loading && !progress && (
-            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-4">
-              <div className="flex items-center gap-3">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-900" />
-
-                <p className="text-sm text-neutral-600">
-                  Loading current import status...
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Connection */}
-          {connectionError && !isFinished && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
-              <p className="text-sm font-medium text-amber-800">
-                Live progress connection was interrupted.
-              </p>
-
-              <p className="mt-1 text-xs text-amber-700">
-                The import may still be processing in the
-                background.
-              </p>
-            </div>
-          )}
-
-          {/* Completion */}
-          {isCompleted && (
-            <div className="rounded-2xl border border-green-200 bg-green-50 p-5">
-              <div className="flex gap-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
-                  ✓
-                </div>
-
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="font-semibold text-green-900">
-                    Import completed successfully
+                  <p className="font-medium text-neutral-900">
+                    {progress.fileName}
                   </p>
 
-                  <p className="mt-1 text-sm text-green-700">
-                    All{" "}
-                    {progress?.successfulRecords}{" "}
-                    records were imported successfully.
+                  <p className="mt-1 text-sm text-neutral-500">
+                    {progress.processedRecords} of{" "}
+                    {progress.totalRecords} records processed
+                  </p>
+                </div>
+
+                <span
+                  className={`inline-flex w-fit rounded-full px-3 py-1.5 text-xs font-semibold ${getStatusClass(
+                    progress.status,
+                  )}`}
+                >
+                  {getStatusLabel(progress.status)}
+                </span>
+              </div>
+
+              <div className="mt-6">
+                <div className="mb-2 flex items-center justify-between text-sm">
+                  <span className="font-medium text-neutral-600">
+                    Progress
+                  </span>
+
+                  <span
+                    className={`font-bold ${
+                      progress.status === "completed"
+                        ? "text-green-600"
+                        : progress.status ===
+                            "completed_with_errors"
+                          ? "text-orange-600"
+                          : progress.status ===
+                              "failed"
+                            ? "text-red-600"
+                            : "text-neutral-900"
+                    }`}
+                  >
+                    {progress.progressPercentage}%
+                  </span>
+                </div>
+
+                <div
+                  className={`h-4 overflow-hidden rounded-full ${getProgressBackgroundClass(
+                    progress.status,
+                  )}`}
+                >
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ease-out ${getProgressBarClass(
+                      progress.status,
+                    )}`}
+                    style={{
+                      width: `${percentage}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-3 gap-3">
+                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
+                  <p className="text-xs text-neutral-500">
+                    Processed
+                  </p>
+
+                  <p className="mt-1 text-xl font-bold text-neutral-900">
+                    {progress.processedRecords}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                  <p className="text-xs font-medium text-green-700">
+                    Successful
+                  </p>
+
+                  <p className="mt-1 text-xl font-bold text-green-700">
+                    {progress.successfulRecords}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+                  <p className="text-xs font-medium text-orange-700">
+                    Failed
+                  </p>
+
+                  <p className="mt-1 text-xl font-bold text-orange-700">
+                    {progress.failedRecords}
                   </p>
                 </div>
               </div>
+
+              {progress.failureMessage && (
+                <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {progress.failureMessage}
+                </div>
+              )}
+
+              {progress.status === "completed" && (
+                <div className="mt-5 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
+                  Import completed successfully.
+                </div>
+              )}
+
+              {progress.status ===
+                "completed_with_errors" && (
+                <div className="mt-5 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-700">
+                  Import completed, but some records could not
+                  be imported.
+                </div>
+              )}
             </div>
           )}
+        </div>
 
-          {completedWithErrors && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
-              <div className="flex gap-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white">
-                  !
-                </div>
-
-                <div>
-                  <p className="font-semibold text-amber-900">
-                    Import completed with errors
-                  </p>
-
-                  <p className="mt-1 text-sm text-amber-700">
-                    {progress?.successfulRecords}{" "}
-                    records succeeded and{" "}
-                    {progress?.failedRecords}{" "}
-                    records failed.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {failed && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
-              <div className="flex gap-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-600 text-white">
-                  ×
-                </div>
-
-                <div>
-                  <p className="font-semibold text-red-900">
-                    Import failed
-                  </p>
-
-                  <p className="mt-1 text-sm text-red-700">
-                    The processor could not complete this
-                    import.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Footer */}
-          <div className="flex justify-end pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl bg-neutral-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-neutral-800"
-            >
-              {isFinished ? "Done" : "Close"}
-            </button>
-          </div>
+        <div className="flex justify-end border-t border-neutral-200 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>

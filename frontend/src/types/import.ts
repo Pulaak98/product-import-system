@@ -12,6 +12,7 @@ export interface CsvUploadResponse {
 
 export interface CreateImportJobResponse {
   message: string;
+
   job: {
     id: number;
     original_file_name: string;
@@ -24,13 +25,30 @@ export interface CreateImportJobResponse {
   };
 }
 
-export interface ImportProgress {
+export interface ImportJobProgress {
   jobId: number;
+
+  fileName: string;
+
   status: string;
+
   totalRecords: number;
+
   processedRecords: number;
+
   successfulRecords: number;
+
   failedRecords: number;
+
   progressPercentage: number;
+
+  createdAt: string;
+
+  startedAt: string | null;
+
+  completedAt: string | null;
+
   updatedAt: string;
+
+  failureMessage: string | null;
 }
