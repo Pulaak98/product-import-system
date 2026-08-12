@@ -211,6 +211,70 @@ export class ImportService {
       job,
     };
   }
+async getImportProgress(
+  jobId: number,
+) {
+  const job = await this.db
+    .selectFrom('import_jobs')
+    .select([
+      'id',
+      'original_file_name',
+      'status',
+      'total_records',
+      'processed_records',
+      'successful_records',
+      'failed_records',
+      'progress_percentage',
+      'created_at',
+      'started_at',
+      'completed_at',
+    ])
+    .where('id', '=', jobId)
+    .executeTakeFirst();
+
+  if (!job) {
+    throw new NotFoundException(
+      'Import job not found.',
+    );
+  }
+
+  return {
+    jobId: job.id,
+
+    fileName:
+      job.original_file_name,
+
+    status:
+      job.status,
+
+    totalRecords:
+      job.total_records,
+
+    processedRecords:
+      job.processed_records,
+
+    successfulRecords:
+      job.successful_records,
+
+    failedRecords:
+      job.failed_records,
+
+    progressPercentage:
+      Number(
+        job.progress_percentage,
+      ),
+
+    createdAt:
+      job.created_at,
+
+    startedAt:
+      job.started_at,
+
+    completedAt:
+      job.completed_at,
+  };
+}
+
 
   private async removeFile(
     filePath: string,

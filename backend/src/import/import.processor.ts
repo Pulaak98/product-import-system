@@ -10,12 +10,9 @@ import { Kysely } from 'kysely';
 import { parse } from 'csv-parse/sync';
 import { readFile } from 'fs/promises';
 
-
 import { DATABASE } from '../database/database.module';
-import {
-  Database,
-  ImportJobsTable,
-} from '../database/database.types';
+import { Database } from '../database/database.types';
+import { ImportProgressService } from './import-progress.service';
 
 interface ImportJob {
   id: number;
@@ -51,6 +48,8 @@ export class ImportProcessor
   constructor(
     @Inject(DATABASE)
     private readonly db: Kysely<Database>,
+
+    private readonly importProgressService: ImportProgressService,
   ) {}
 
   onModuleInit() {
@@ -127,7 +126,7 @@ export class ImportProcessor
       return null;
     }
 
-    return {
+    const job: ImportJob = {
       id: claimedJob.id,
       original_file_name:
         claimedJob.original_file_name,
@@ -142,6 +141,19 @@ export class ImportProcessor
           string
         >,
     };
+
+    this.importProgressService.emitStarted({
+      jobId: job.id,
+      status: 'processing',
+      totalRecords: job.total_records,
+      processedRecords: 0,
+      successfulRecords: 0,
+      failedRecords: 0,
+      progressPercentage: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
+    return job;
   }
 
   private async processJob(
@@ -238,7 +250,8 @@ export class ImportProcessor
                 row,
                 job.column_mappings,
               ),
-            error_code: 'IMPORT_ROW_ERROR',
+            error_code:
+              'IMPORT_ROW_ERROR',
             error_message: `Row ${
               index + 2
             }: ${message}`,
@@ -247,6 +260,25 @@ export class ImportProcessor
             last_retry_date: null,
           })
           .executeTakeFirstOrThrow();
+
+        this.importProgressService.emitProgress({
+          jobId: job.id,
+          status: 'processing',
+          totalRecords: records.length,
+          processedRecords:
+            processedRecords + 1,
+          successfulRecords,
+          failedRecords,
+          progressPercentage: Number(
+            (
+              ((processedRecords + 1) /
+                records.length) *
+              100
+            ).toFixed(2),
+          ),
+          updatedAt:
+            new Date().toISOString(),
+        });
       }
 
       processedRecords++;
@@ -277,6 +309,18 @@ export class ImportProcessor
         })
         .where('id', '=', job.id)
         .executeTakeFirstOrThrow();
+
+      this.importProgressService.emitProgress({
+        jobId: job.id,
+        status: 'processing',
+        totalRecords: records.length,
+        processedRecords,
+        successfulRecords,
+        failedRecords,
+        progressPercentage: progress,
+        updatedAt:
+          new Date().toISOString(),
+      });
     }
 
     const finalStatus =
@@ -301,6 +345,18 @@ export class ImportProcessor
       .where('id', '=', job.id)
       .executeTakeFirstOrThrow();
 
+    this.importProgressService.emitCompleted({
+      jobId: job.id,
+      status: finalStatus,
+      totalRecords: records.length,
+      processedRecords,
+      successfulRecords,
+      failedRecords,
+      progressPercentage: 100,
+      updatedAt:
+        new Date().toISOString(),
+    });
+
     this.logger.log(
       `Import job ${job.id} completed. Success: ${successfulRecords}, Failed: ${failedRecords}.`,
     );
@@ -324,7 +380,8 @@ export class ImportProcessor
       ).trim();
     };
 
-    const priceValue = getValue('price');
+    const priceValue =
+      getValue('price');
 
     const stockValue =
       getValue('stock_quantity');
@@ -333,7 +390,8 @@ export class ImportProcessor
       name: getValue('name'),
       sku: getValue('sku'),
       description:
-        getValue('description') || null,
+        getValue('description') ||
+        null,
       price: Number(priceValue),
       stock_quantity: stockValue
         ? Number(stockValue)
@@ -343,7 +401,8 @@ export class ImportProcessor
       brand:
         getValue('brand') || null,
       status:
-        getValue('status') || 'active',
+        getValue('status') ||
+        'active',
     };
   }
 
@@ -371,11 +430,15 @@ export class ImportProcessor
     }
 
     if (!product.sku) {
-      throw new Error('Missing SKU.');
+      throw new Error(
+        'Missing SKU.',
+      );
     }
 
     if (
-      !Number.isFinite(product.price)
+      !Number.isFinite(
+        product.price,
+      )
     ) {
       throw new Error(
         'Invalid price.',
@@ -437,5 +500,10 @@ export class ImportProcessor
       })
       .where('id', '=', jobId)
       .executeTakeFirst();
+
+    this.importProgressService.emitFailed(
+      jobId,
+      message,
+    );
   }
 }

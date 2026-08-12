@@ -1,7 +1,12 @@
 import { useRef, useState } from "react";
 import { createImportJob, uploadCsv } from "../services/import.service";
+import ImportProgressPanel from "./ImportProgressPanel";
 
-import type { CsvPreviewRow, CsvUploadResponse } from "../types/import";
+import type {
+  CsvPreviewRow,
+  CsvUploadResponse,
+  CreateImportJobResponse,
+} from "../types/import";
 
 interface ImportModalProps {
   onClose: () => void;
@@ -61,7 +66,11 @@ const FIELD_ALIASES: Record<string, string[]> = {
 const VALID_STATUSES = ["active", "inactive", "draft"];
 
 function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 function getSuggestedColumn(fieldKey: string, headers: string[]): string {
@@ -82,7 +91,8 @@ function getSuggestedColumn(fieldKey: string, headers: string[]): string {
 
     return normalizedAliases.some(
       (alias) =>
-        normalizedHeader.includes(alias) || alias.includes(normalizedHeader),
+        normalizedHeader.includes(alias) ||
+        alias.includes(normalizedHeader),
     );
   });
 
@@ -98,24 +108,24 @@ function ImportModal({ onClose }: ImportModalProps) {
 
   const [creatingJob, setCreatingJob] = useState(false);
 
-  const [jobCreated, setJobCreated] = useState(false);
+  const [createdJobId, setCreatedJobId] = useState<number | null>(null);
 
   const [error, setError] = useState("");
 
-  const [uploadResult, setUploadResult] = useState<CsvUploadResponse | null>(
-    null,
-  );
+  const [uploadResult, setUploadResult] =
+    useState<CsvUploadResponse | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
 
-  const [mappings, setMappings] = useState<Record<string, string>>({});
+  const [mappings, setMappings] =
+    useState<Record<string, string>>({});
 
   async function handleFile(file: File) {
     setError("");
     setUploadResult(null);
     setMappings({});
     setStep(1);
-    setJobCreated(false);
+    setCreatedJobId(null);
 
     if (!file.name.toLowerCase().endsWith(".csv")) {
       setError("Only CSV files are supported.");
@@ -142,7 +152,10 @@ function ImportModal({ onClose }: ImportModalProps) {
       const suggestedMappings: Record<string, string> = {};
 
       PRODUCT_FIELDS.forEach((field) => {
-        const suggestedColumn = getSuggestedColumn(field.key, result.headers);
+        const suggestedColumn = getSuggestedColumn(
+          field.key,
+          result.headers,
+        );
 
         if (suggestedColumn) {
           suggestedMappings[field.key] = suggestedColumn;
@@ -152,14 +165,18 @@ function ImportModal({ onClose }: ImportModalProps) {
       setMappings(suggestedMappings);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to upload CSV file.",
+        err instanceof Error
+          ? err.message
+          : "Failed to upload CSV file.",
       );
     } finally {
       setUploading(false);
     }
   }
 
-  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileChange(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
     const file = event.target.files?.[0];
 
     if (file) {
@@ -167,7 +184,9 @@ function ImportModal({ onClose }: ImportModalProps) {
     }
   }
 
-  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+  function handleDrop(
+    event: React.DragEvent<HTMLDivElement>,
+  ) {
     event.preventDefault();
 
     setIsDragging(false);
@@ -179,7 +198,9 @@ function ImportModal({ onClose }: ImportModalProps) {
     }
   }
 
-  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+  function handleDragOver(
+    event: React.DragEvent<HTMLDivElement>,
+  ) {
     event.preventDefault();
     setIsDragging(true);
   }
@@ -205,14 +226,17 @@ function ImportModal({ onClose }: ImportModalProps) {
     setError("");
     setMappings({});
     setStep(1);
-    setJobCreated(false);
+    setCreatedJobId(null);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   }
 
-  function handleMappingChange(fieldKey: string, column: string) {
+  function handleMappingChange(
+    fieldKey: string,
+    column: string,
+  ) {
     setMappings((current) => ({
       ...current,
       [fieldKey]: column,
@@ -230,7 +254,9 @@ function ImportModal({ onClose }: ImportModalProps) {
 
     PRODUCT_FIELDS.forEach((field) => {
       if (field.required && !mappings[field.key]) {
-        errors.push(`${field.label} is required and must be mapped.`);
+        errors.push(
+          `${field.label} is required and must be mapped.`,
+        );
       }
     });
 
@@ -239,13 +265,18 @@ function ImportModal({ onClose }: ImportModalProps) {
       .map(([, column]) => column);
 
     const duplicateColumns = selectedColumns.filter(
-      (column, index) => selectedColumns.indexOf(column) !== index,
+      (column, index) =>
+        selectedColumns.indexOf(column) !== index,
     );
 
-    const uniqueDuplicateColumns = [...new Set(duplicateColumns)];
+    const uniqueDuplicateColumns = [
+      ...new Set(duplicateColumns),
+    ];
 
     uniqueDuplicateColumns.forEach((column) => {
-      errors.push(`CSV column "${column}" can only be mapped once.`);
+      errors.push(
+        `CSV column "${column}" can only be mapped once.`,
+      );
     });
 
     return errors;
@@ -273,7 +304,10 @@ function ImportModal({ onClose }: ImportModalProps) {
     return row[column] || "-";
   }
 
-  function getMappedValue(row: CsvPreviewRow, fieldKey: string): string {
+  function getMappedValue(
+    row: CsvPreviewRow,
+    fieldKey: string,
+  ): string {
     const column = mappings[fieldKey];
 
     if (!column) {
@@ -283,17 +317,18 @@ function ImportModal({ onClose }: ImportModalProps) {
     return String(row[column] ?? "").trim();
   }
 
-  function validateRow(row: CsvPreviewRow): ValidationResult {
+  function validateRow(
+    row: CsvPreviewRow,
+  ): ValidationResult {
     const errors: string[] = [];
 
     const name = getMappedValue(row, "name");
-
     const sku = getMappedValue(row, "sku");
-
     const price = getMappedValue(row, "price");
-
-    const stockQuantity = getMappedValue(row, "stock_quantity");
-
+    const stockQuantity = getMappedValue(
+      row,
+      "stock_quantity",
+    );
     const status = getMappedValue(row, "status");
 
     if (!name) {
@@ -320,17 +355,25 @@ function ImportModal({ onClose }: ImportModalProps) {
       const numericStock = Number(stockQuantity);
 
       if (!Number.isInteger(numericStock)) {
-        errors.push("Stock quantity must be an integer.");
+        errors.push(
+          "Stock quantity must be an integer.",
+        );
       } else if (numericStock < 0) {
-        errors.push("Stock quantity cannot be negative.");
+        errors.push(
+          "Stock quantity cannot be negative.",
+        );
       }
     }
 
     if (status) {
       const normalizedStatus = status.toLowerCase();
 
-      if (!VALID_STATUSES.includes(normalizedStatus)) {
-        errors.push(`Invalid product status "${status}".`);
+      if (
+        !VALID_STATUSES.includes(normalizedStatus)
+      ) {
+        errors.push(
+          `Invalid product status "${status}".`,
+        );
       }
     }
 
@@ -358,7 +401,9 @@ function ImportModal({ onClose }: ImportModalProps) {
         if (seenSkus.has(normalizedSku)) {
           validation.valid = false;
 
-          validation.errors.push("Duplicate SKU within uploaded file.");
+          validation.errors.push(
+            "Duplicate SKU within uploaded file.",
+          );
         }
 
         seenSkus.add(normalizedSku);
@@ -408,16 +453,25 @@ function ImportModal({ onClose }: ImportModalProps) {
         setCreatingJob(true);
         setError("");
 
-        await createImportJob(
-          uploadResult.fileId,
-          uploadResult.originalFileName,
-          mappings,
-        );
+        const response: CreateImportJobResponse =
+          await createImportJob(
+            uploadResult.fileId,
+            uploadResult.originalFileName,
+            mappings,
+          );
 
-        setJobCreated(true);
+        if (!response.job?.id) {
+          throw new Error(
+            "Import job was created but no job ID was returned.",
+          );
+        }
+
+        setCreatedJobId(response.job.id);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to create import job.",
+          err instanceof Error
+            ? err.message
+            : "Failed to create import job.",
         );
       } finally {
         setCreatingJob(false);
@@ -425,15 +479,31 @@ function ImportModal({ onClose }: ImportModalProps) {
     }
   }
 
-  const validationResults = step === 3 ? getPreviewValidation() : [];
+  const validationResults =
+    step === 3 ? getPreviewValidation() : [];
 
-  const validPreviewCount = validationResults.filter(
-    (result) => result.valid,
-  ).length;
+  const validPreviewCount =
+    validationResults.filter(
+      (result) => result.valid,
+    ).length;
 
-  const invalidPreviewCount = validationResults.filter(
-    (result) => !result.valid,
-  ).length;
+  const invalidPreviewCount =
+    validationResults.filter(
+      (result) => !result.valid,
+    ).length;
+
+  /*
+   * Once the job has been created, replace the import
+   * configuration modal with the live progress panel.
+   */
+  if (createdJobId !== null) {
+    return (
+      <ImportProgressPanel
+        jobId={createdJobId}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -453,7 +523,8 @@ function ImportModal({ onClose }: ImportModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-3 py-2 text-xl text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+              disabled={creatingJob}
+              className="rounded-lg px-3 py-2 text-xl text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               ×
             </button>
@@ -462,7 +533,9 @@ function ImportModal({ onClose }: ImportModalProps) {
           <div className="mt-6 flex items-center gap-2">
             <div
               className={`flex items-center gap-2 ${
-                step >= 1 ? "text-neutral-900" : "text-neutral-400"
+                step >= 1
+                  ? "text-neutral-900"
+                  : "text-neutral-400"
               }`}
             >
               <span
@@ -475,18 +548,24 @@ function ImportModal({ onClose }: ImportModalProps) {
                 1
               </span>
 
-              <span className="text-sm font-medium">Browse File</span>
+              <span className="text-sm font-medium">
+                Browse File
+              </span>
             </div>
 
             <div
               className={`h-px flex-1 ${
-                step >= 2 ? "bg-neutral-900" : "bg-neutral-200"
+                step >= 2
+                  ? "bg-neutral-900"
+                  : "bg-neutral-200"
               }`}
             />
 
             <div
               className={`flex items-center gap-2 ${
-                step >= 2 ? "text-neutral-900" : "text-neutral-400"
+                step >= 2
+                  ? "text-neutral-900"
+                  : "text-neutral-400"
               }`}
             >
               <span
@@ -499,18 +578,24 @@ function ImportModal({ onClose }: ImportModalProps) {
                 2
               </span>
 
-              <span className="text-sm font-medium">Map Columns</span>
+              <span className="text-sm font-medium">
+                Map Columns
+              </span>
             </div>
 
             <div
               className={`h-px flex-1 ${
-                step >= 3 ? "bg-neutral-900" : "bg-neutral-200"
+                step >= 3
+                  ? "bg-neutral-900"
+                  : "bg-neutral-200"
               }`}
             />
 
             <div
               className={`flex items-center gap-2 ${
-                step >= 3 ? "text-neutral-900" : "text-neutral-400"
+                step >= 3
+                  ? "text-neutral-900"
+                  : "text-neutral-400"
               }`}
             >
               <span
@@ -523,7 +608,9 @@ function ImportModal({ onClose }: ImportModalProps) {
                 3
               </span>
 
-              <span className="text-sm">Preview</span>
+              <span className="text-sm">
+                Preview
+              </span>
             </div>
           </div>
         </div>
@@ -536,7 +623,9 @@ function ImportModal({ onClose }: ImportModalProps) {
                   onDrop={handleDrop}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() =>
+                    fileInputRef.current?.click()
+                  }
                   className={`cursor-pointer rounded-xl border-2 border-dashed p-12 text-center transition ${
                     isDragging
                       ? "border-neutral-900 bg-neutral-50"
@@ -560,7 +649,8 @@ function ImportModal({ onClose }: ImportModalProps) {
                   </h3>
 
                   <p className="mt-1 text-sm text-neutral-500">
-                    or click to browse files from your computer
+                    or click to browse files from your
+                    computer
                   </p>
 
                   <p className="mt-4 text-xs text-neutral-400">
@@ -585,7 +675,9 @@ function ImportModal({ onClose }: ImportModalProps) {
                         </p>
 
                         <p className="mt-1 text-sm text-neutral-500">
-                          {formatFileSize(uploadResult.fileSize)}
+                          {formatFileSize(
+                            uploadResult.fileSize,
+                          )}
                         </p>
                       </div>
 
@@ -605,14 +697,16 @@ function ImportModal({ onClose }: ImportModalProps) {
                     </h3>
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {uploadResult.headers.map((header) => (
-                        <span
-                          key={header}
-                          className="rounded-full bg-neutral-100 px-3 py-1.5 text-sm text-neutral-700"
-                        >
-                          {header}
-                        </span>
-                      ))}
+                      {uploadResult.headers.map(
+                        (header) => (
+                          <span
+                            key={header}
+                            className="rounded-full bg-neutral-100 px-3 py-1.5 text-sm text-neutral-700"
+                          >
+                            {header}
+                          </span>
+                        ),
+                      )}
                     </div>
                   </div>
 
@@ -631,29 +725,37 @@ function ImportModal({ onClose }: ImportModalProps) {
                       <table className="min-w-full text-left text-sm">
                         <thead className="bg-neutral-50">
                           <tr>
-                            {uploadResult.headers.map((header) => (
-                              <th
-                                key={header}
-                                className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700"
-                              >
-                                {header}
-                              </th>
-                            ))}
+                            {uploadResult.headers.map(
+                              (header) => (
+                                <th
+                                  key={header}
+                                  className="whitespace-nowrap px-4 py-3 font-medium text-neutral-700"
+                                >
+                                  {header}
+                                </th>
+                              ),
+                            )}
                           </tr>
                         </thead>
 
                         <tbody className="divide-y divide-neutral-100">
                           {uploadResult.previewRows.map(
-                            (row: CsvPreviewRow, rowIndex) => (
+                            (
+                              row: CsvPreviewRow,
+                              rowIndex,
+                            ) => (
                               <tr key={rowIndex}>
-                                {uploadResult.headers.map((header) => (
-                                  <td
-                                    key={header}
-                                    className="whitespace-nowrap px-4 py-3 text-neutral-600"
-                                  >
-                                    {row[header] || "-"}
-                                  </td>
-                                ))}
+                                {uploadResult.headers.map(
+                                  (header) => (
+                                    <td
+                                      key={header}
+                                      className="whitespace-nowrap px-4 py-3 text-neutral-600"
+                                    >
+                                      {row[header] ||
+                                        "-"}
+                                    </td>
+                                  ),
+                                )}
                               </tr>
                             ),
                           )}
@@ -680,22 +782,22 @@ function ImportModal({ onClose }: ImportModalProps) {
                 </h3>
 
                 <p className="mt-1 text-sm text-neutral-500">
-                  Match your CSV columns to the supported product fields.
+                  Match your CSV columns to the supported
+                  product fields.
                 </p>
               </div>
 
               <div className="overflow-hidden rounded-xl border border-neutral-200">
                 <div className="grid grid-cols-[1.2fr_1.5fr_1fr] gap-4 bg-neutral-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   <div>Product Field</div>
-
                   <div>CSV Column</div>
-
                   <div>Sample Value</div>
                 </div>
 
                 <div className="divide-y divide-neutral-200">
                   {PRODUCT_FIELDS.map((field) => {
-                    const selectedColumn = mappings[field.key] ?? "";
+                    const selectedColumn =
+                      mappings[field.key] ?? "";
 
                     return (
                       <div
@@ -708,41 +810,56 @@ function ImportModal({ onClose }: ImportModalProps) {
                           </div>
 
                           <div className="mt-1 text-xs text-neutral-500">
-                            {field.required ? "Required" : "Optional"}
+                            {field.required
+                              ? "Required"
+                              : "Optional"}
                           </div>
                         </div>
 
                         <select
                           value={selectedColumn}
                           onChange={(event) =>
-                            handleMappingChange(field.key, event.target.value)
+                            handleMappingChange(
+                              field.key,
+                              event.target.value,
+                            )
                           }
                           className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2.5 text-sm text-neutral-700 outline-none focus:border-neutral-500"
                         >
-                          <option value="">Not mapped</option>
+                          <option value="">
+                            Not mapped
+                          </option>
 
-                          {uploadResult.headers.map((header) => {
-                            const usedByAnotherField = Object.entries(
-                              mappings,
-                            ).some(
-                              ([key, column]) =>
-                                key !== field.key && column === header,
-                            );
+                          {uploadResult.headers.map(
+                            (header) => {
+                              const usedByAnotherField =
+                                Object.entries(
+                                  mappings,
+                                ).some(
+                                  ([key, column]) =>
+                                    key !== field.key &&
+                                    column === header,
+                                );
 
-                            return (
-                              <option
-                                key={header}
-                                value={header}
-                                disabled={usedByAnotherField}
-                              >
-                                {header}
-                              </option>
-                            );
-                          })}
+                              return (
+                                <option
+                                  key={header}
+                                  value={header}
+                                  disabled={
+                                    usedByAnotherField
+                                  }
+                                >
+                                  {header}
+                                </option>
+                              );
+                            },
+                          )}
                         </select>
 
                         <div className="truncate text-sm text-neutral-600">
-                          {getSampleValue(selectedColumn)}
+                          {getSampleValue(
+                            selectedColumn,
+                          )}
                         </div>
                       </div>
                     );
@@ -766,13 +883,16 @@ function ImportModal({ onClose }: ImportModalProps) {
                 </h3>
 
                 <p className="mt-1 text-sm text-neutral-500">
-                  Review the first records before starting the import.
+                  Review the first records before starting
+                  the import.
                 </p>
               </div>
 
               <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="rounded-xl border border-neutral-200 bg-white p-4">
-                  <p className="text-sm text-neutral-500">Preview Records</p>
+                  <p className="text-sm text-neutral-500">
+                    Preview Records
+                  </p>
 
                   <p className="mt-1 text-2xl font-semibold text-neutral-900">
                     {uploadResult.previewRows.length}
@@ -780,7 +900,9 @@ function ImportModal({ onClose }: ImportModalProps) {
                 </div>
 
                 <div className="rounded-xl border border-neutral-200 bg-white p-4">
-                  <p className="text-sm text-neutral-500">Valid Records</p>
+                  <p className="text-sm text-neutral-500">
+                    Valid Records
+                  </p>
 
                   <p className="mt-1 text-2xl font-semibold text-green-700">
                     {validPreviewCount}
@@ -788,7 +910,9 @@ function ImportModal({ onClose }: ImportModalProps) {
                 </div>
 
                 <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                  <p className="text-sm text-red-700">Invalid Records</p>
+                  <p className="text-sm text-red-700">
+                    Invalid Records
+                  </p>
 
                   <p className="mt-1 text-2xl font-semibold text-red-700">
                     {invalidPreviewCount}
@@ -796,7 +920,8 @@ function ImportModal({ onClose }: ImportModalProps) {
 
                   {invalidPreviewCount > 0 && (
                     <p className="mt-1 text-xs text-red-600">
-                      Fix the invalid records before importing.
+                      Fix the invalid records before
+                      importing.
                     </p>
                   )}
                 </div>
@@ -811,9 +936,10 @@ function ImportModal({ onClose }: ImportModalProps) {
                   {Object.entries(mappings)
                     .filter(([, column]) => column)
                     .map(([field, column]) => {
-                      const productField = PRODUCT_FIELDS.find(
-                        (item) => item.key === field,
-                      );
+                      const productField =
+                        PRODUCT_FIELDS.find(
+                          (item) => item.key === field,
+                        );
 
                       return (
                         <span
@@ -828,13 +954,6 @@ function ImportModal({ onClose }: ImportModalProps) {
                     })}
                 </div>
               </div>
-
-              {jobCreated && (
-                <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-sm text-green-700">
-                  Import job created successfully. The background processor will
-                  now process the CSV.
-                </div>
-              )}
 
               <div className="overflow-x-auto rounded-xl border border-neutral-200">
                 <table className="min-w-full text-left text-sm">
@@ -875,76 +994,109 @@ function ImportModal({ onClose }: ImportModalProps) {
                   </thead>
 
                   <tbody className="divide-y divide-neutral-100">
-                    {uploadResult.previewRows.map((row, index) => {
-                      const validation = validationResults[index];
+                    {uploadResult.previewRows.map(
+                      (row, index) => {
+                        const validation =
+                          validationResults[index];
 
-                      return (
-                        <tr
-                          key={index}
-                          className={validation?.valid ? "" : "bg-red-50/40"}
-                        >
-                          <td className="px-4 py-4 text-neutral-500">
-                            {index + 2}
-                          </td>
+                        return (
+                          <tr
+                            key={index}
+                            className={
+                              validation?.valid
+                                ? ""
+                                : "bg-red-50/40"
+                            }
+                          >
+                            <td className="px-4 py-4 text-neutral-500">
+                              {index + 2}
+                            </td>
 
-                          <td className="px-4 py-4 font-medium text-neutral-900">
-                            {getMappedValue(row, "name") || "-"}
-                          </td>
+                            <td className="px-4 py-4 font-medium text-neutral-900">
+                              {getMappedValue(
+                                row,
+                                "name",
+                              ) || "-"}
+                            </td>
 
-                          <td className="px-4 py-4 text-neutral-600">
-                            {getMappedValue(row, "sku") || "-"}
-                          </td>
+                            <td className="px-4 py-4 text-neutral-600">
+                              {getMappedValue(
+                                row,
+                                "sku",
+                              ) || "-"}
+                            </td>
 
-                          <td className="px-4 py-4 text-neutral-600">
-                            {getMappedValue(row, "price") || "-"}
-                          </td>
+                            <td className="px-4 py-4 text-neutral-600">
+                              {getMappedValue(
+                                row,
+                                "price",
+                              ) || "-"}
+                            </td>
 
-                          <td className="px-4 py-4 text-neutral-600">
-                            {getMappedValue(row, "stock_quantity") || "-"}
-                          </td>
+                            <td className="px-4 py-4 text-neutral-600">
+                              {getMappedValue(
+                                row,
+                                "stock_quantity",
+                              ) || "-"}
+                            </td>
 
-                          <td className="px-4 py-4 text-neutral-600">
-                            {getMappedValue(row, "category") || "-"}
-                          </td>
+                            <td className="px-4 py-4 text-neutral-600">
+                              {getMappedValue(
+                                row,
+                                "category",
+                              ) || "-"}
+                            </td>
 
-                          <td className="px-4 py-4 text-neutral-600">
-                            {getMappedValue(row, "status") || "-"}
-                          </td>
+                            <td className="px-4 py-4 text-neutral-600">
+                              {getMappedValue(
+                                row,
+                                "status",
+                              ) || "-"}
+                            </td>
 
-                          <td className="px-4 py-4">
-                            {validation?.valid ? (
-                              <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
-                                Valid
-                              </span>
-                            ) : (
-                              <div>
-                                <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
-                                  Invalid
+                            <td className="px-4 py-4">
+                              {validation?.valid ? (
+                                <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
+                                  Valid
                                 </span>
+                              ) : (
+                                <div>
+                                  <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
+                                    Invalid
+                                  </span>
 
-                                <div className="mt-2 space-y-1">
-                                  {validation?.errors.map(
-                                    (validationError, errorIndex) => (
-                                      <p
-                                        key={errorIndex}
-                                        className="text-xs text-red-600"
-                                      >
-                                        {validationError}
-                                      </p>
-                                    ),
-                                  )}
+                                  <div className="mt-2 space-y-1">
+                                    {validation?.errors.map(
+                                      (
+                                        validationError,
+                                        errorIndex,
+                                      ) => (
+                                        <p
+                                          key={
+                                            errorIndex
+                                          }
+                                          className="text-xs text-red-600"
+                                        >
+                                          {
+                                            validationError
+                                          }
+                                        </p>
+                                      ),
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      },
+                    )}
                   </tbody>
                 </table>
               </div>
 
-              {uploadResult.previewRows.length === 0 && (
+              {uploadResult.previewRows.length ===
+                0 && (
                 <div className="rounded-xl border border-neutral-200 p-8 text-center text-sm text-neutral-500">
                   No data rows were found in the CSV.
                 </div>
@@ -967,7 +1119,10 @@ function ImportModal({ onClose }: ImportModalProps) {
                 onClick={() => {
                   setError("");
 
-                  setStep((current) => (current - 1) as ImportStep);
+                  setStep(
+                    (current) =>
+                      (current - 1) as ImportStep,
+                  );
                 }}
                 disabled={creatingJob}
                 className="rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
@@ -992,7 +1147,6 @@ function ImportModal({ onClose }: ImportModalProps) {
               disabled={
                 uploading ||
                 creatingJob ||
-                jobCreated ||
                 (step === 1
                   ? !canContinueToMapping()
                   : step === 2
@@ -1005,9 +1159,7 @@ function ImportModal({ onClose }: ImportModalProps) {
               {step === 3
                 ? creatingJob
                   ? "Creating Import..."
-                  : jobCreated
-                    ? "Import Started"
-                    : "Continue to Import"
+                  : "Start Import"
                 : "Continue"}
             </button>
           </div>

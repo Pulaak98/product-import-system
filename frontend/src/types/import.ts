@@ -23,3 +23,14 @@ export interface CreateImportJobResponse {
     progress_percentage: number;
   };
 }
+
+export interface ImportProgress {
+  jobId: number;
+  status: string;
+  totalRecords: number;
+  processedRecords: number;
+  successfulRecords: number;
+  failedRecords: number;
+  progressPercentage: number;
+  updatedAt: string;
+}
