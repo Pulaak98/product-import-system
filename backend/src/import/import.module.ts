@@ -5,6 +5,7 @@ import { ImportService } from './import.service';
 import { ImportProcessor } from './import.processor';
 import { ImportProgressService } from './import-progress.service';
 import { CsvService } from './csv/csv.service';
+import { FailedRecordsService } from './failed-records.service';
 
 @Module({
   controllers: [
@@ -16,6 +17,7 @@ import { CsvService } from './csv/csv.service';
     ImportProcessor,
     ImportProgressService,
     CsvService,
+    FailedRecordsService,
   ],
 })
 export class ImportModule {}

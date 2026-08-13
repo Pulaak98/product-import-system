@@ -1,7 +1,23 @@
-import { useEffect, useState } from "react";
-import { getImportProgress } from "../services/import.service";
+import {
+  useEffect,
+  useState,
+} from "react";
 
-import type { ImportJobProgress } from "../types/import";
+import {
+  downloadFailedImportRecords,
+  getFailedImportRecords,
+  getImportProgress,
+  retryAllFailedImportRecords,
+  retryFailedImportRecord,
+} from "../services/import.service";
+
+import type {
+  FailedImportRecord,
+} from "../services/import.service";
+
+import type {
+  ImportJobProgress,
+} from "../types/import";
 
 interface ImportProgressPanelProps {
   jobId: number;
@@ -12,19 +28,73 @@ function ImportProgressPanel({
   jobId,
   onClose,
 }: ImportProgressPanelProps) {
-  const [progress, setProgress] =
-    useState<ImportJobProgress | null>(null);
+  const [
+    progress,
+    setProgress,
+  ] =
+    useState<ImportJobProgress | null>(
+      null,
+    );
 
-  const [loading, setLoading] = useState(true);
+  const [
+    failedRecords,
+    setFailedRecords,
+  ] =
+    useState<FailedImportRecord[]>(
+      [],
+    );
 
-  const [error, setError] = useState("");
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    loadingFailedRecords,
+    setLoadingFailedRecords,
+  ] =
+    useState(false);
+
+  const [
+    downloading,
+    setDownloading,
+  ] =
+    useState(false);
+
+  const [
+    retryingRecordId,
+    setRetryingRecordId,
+  ] =
+    useState<number | null>(null);
+
+  const [
+    retryingAll,
+    setRetryingAll,
+  ] =
+    useState(false);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState("");
+
+  const [
+    failedRecordsError,
+    setFailedRecordsError,
+  ] =
+    useState("");
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadProgress() {
       try {
-        const result = await getImportProgress(jobId);
+        const result =
+          await getImportProgress(
+            jobId,
+          );
 
         if (!cancelled) {
           setProgress(result);
@@ -52,12 +122,47 @@ function ImportProgressPanel({
     };
   }, [jobId]);
 
-  /*
-   * Poll the API as a reliable fallback.
-   *
-   * This prevents the progress modal from getting stuck
-   * if an SSE event is missed.
-   */
+  async function loadFailedRecords() {
+    try {
+      setLoadingFailedRecords(
+        true,
+      );
+      setFailedRecordsError("");
+
+      const records =
+        await getFailedImportRecords(
+          jobId,
+        );
+
+      setFailedRecords(records);
+    } catch (err) {
+      setFailedRecordsError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load failed records.",
+      );
+    } finally {
+      setLoadingFailedRecords(
+        false,
+      );
+    }
+  }
+
+  useEffect(() => {
+    if (!progress) {
+      return;
+    }
+
+    if (progress.failedRecords > 0) {
+      void loadFailedRecords();
+    } else {
+      setFailedRecords([]);
+    }
+  }, [
+    jobId,
+    progress?.failedRecords,
+  ]);
+
   useEffect(() => {
     if (!progress) {
       return;
@@ -65,33 +170,42 @@ function ImportProgressPanel({
 
     const isTerminal =
       progress.status === "completed" ||
-      progress.status === "completed_with_errors" ||
+      progress.status ===
+        "completed_with_errors" ||
       progress.status === "failed";
 
     if (isTerminal) {
       return;
     }
 
-    const interval = window.setInterval(async () => {
-      try {
-        const result = await getImportProgress(jobId);
+    const interval =
+      window.setInterval(
+        async () => {
+          try {
+            const result =
+              await getImportProgress(
+                jobId,
+              );
 
-        setProgress(result);
-        setError("");
-      } catch {
-        // Keep the existing progress visible if polling fails.
-      }
-    }, 1000);
+            setProgress(result);
+            setError("");
+          } catch {
+            // Keep existing progress visible.
+          }
+        },
+        1000,
+      );
 
     return () => {
-      window.clearInterval(interval);
+      window.clearInterval(
+        interval,
+      );
     };
-  }, [jobId, progress?.status]);
+  }, [
+    jobId,
+    progress?.status,
+  ]);
 
-  /*
-   * SSE provides immediate updates.
-   * Polling above acts as a reliable fallback.
-   */
   useEffect(() => {
     if (!progress) {
       return;
@@ -99,7 +213,8 @@ function ImportProgressPanel({
 
     const isTerminal =
       progress.status === "completed" ||
-      progress.status === "completed_with_errors" ||
+      progress.status ===
+        "completed_with_errors" ||
       progress.status === "failed";
 
     if (isTerminal) {
@@ -110,25 +225,31 @@ function ImportProgressPanel({
       import.meta.env.VITE_API_URL ??
       "http://localhost:3000";
 
-    const eventSource = new EventSource(
-      `${apiBaseUrl}/imports/${jobId}/progress/stream`,
-    );
+    const eventSource =
+      new EventSource(
+        `${apiBaseUrl}/imports/${jobId}/progress/stream`,
+      );
 
     const updateProgress = (
       event: MessageEvent,
     ) => {
       try {
-        const data = JSON.parse(event.data);
+        const data =
+          JSON.parse(
+            event.data,
+          );
 
         if (
           data &&
-          typeof data === "object"
+          typeof data ===
+            "object"
         ) {
           setProgress(
-            (current) => ({
-              ...(current ?? {}),
-              ...data,
-            }) as ImportJobProgress,
+            (current) =>
+              ({
+                ...(current ?? {}),
+                ...data,
+              }) as ImportJobProgress,
           );
         }
       } catch {
@@ -167,20 +288,109 @@ function ImportProgressPanel({
     );
 
     eventSource.onerror = () => {
-      /*
-       * Do nothing.
-       *
-       * Browser will reconnect automatically and
-       * polling continues to keep the UI synchronized.
-       */
+      // Browser reconnects automatically.
     };
 
     return () => {
       eventSource.close();
     };
-  }, [jobId, progress?.status]);
+  }, [
+    jobId,
+    progress?.status,
+  ]);
 
-  function getStatusLabel(status: string) {
+  async function refreshProgress() {
+    try {
+      const result =
+        await getImportProgress(
+          jobId,
+        );
+
+      setProgress(result);
+
+      if (
+        result.failedRecords > 0
+      ) {
+        await loadFailedRecords();
+      } else {
+        setFailedRecords([]);
+      }
+    } catch {
+      // Keep current UI state.
+    }
+  }
+
+  async function handleDownloadFailedRecords() {
+    try {
+      setDownloading(true);
+      setError("");
+
+      await downloadFailedImportRecords(
+        jobId,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to download failed records.",
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function handleRetryRecord(
+    recordId: number,
+  ) {
+    try {
+      setRetryingRecordId(
+        recordId,
+      );
+      setError("");
+
+      await retryFailedImportRecord(
+        jobId,
+        recordId,
+      );
+
+      await refreshProgress();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to retry import record.",
+      );
+    } finally {
+      setRetryingRecordId(
+        null,
+      );
+    }
+  }
+
+  async function handleRetryAll() {
+    try {
+      setRetryingAll(true);
+      setError("");
+
+      await retryAllFailedImportRecords(
+        jobId,
+      );
+
+      await refreshProgress();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to retry failed records.",
+      );
+    } finally {
+      setRetryingAll(false);
+    }
+  }
+
+  function getStatusLabel(
+    status: string,
+  ) {
     switch (status) {
       case "pending":
         return "Waiting to start";
@@ -202,7 +412,9 @@ function ImportProgressPanel({
     }
   }
 
-  function getStatusClass(status: string) {
+  function getStatusClass(
+    status: string,
+  ) {
     switch (status) {
       case "completed":
         return "bg-green-100 text-green-700 ring-1 ring-green-200";
@@ -224,7 +436,9 @@ function ImportProgressPanel({
     }
   }
 
-  function getProgressBarClass(status: string) {
+  function getProgressBarClass(
+    status: string,
+  ) {
     switch (status) {
       case "completed":
         return "bg-gradient-to-r from-green-500 to-emerald-400";
@@ -246,7 +460,9 @@ function ImportProgressPanel({
     }
   }
 
-  function getProgressBackgroundClass(status: string) {
+  function getProgressBackgroundClass(
+    status: string,
+  ) {
     switch (status) {
       case "completed":
         return "bg-green-50";
@@ -265,16 +481,57 @@ function ImportProgressPanel({
     }
   }
 
-  const percentage = progress
-    ? Math.min(
-        Math.max(progress.progressPercentage, 0),
-        100,
-      )
-    : 0;
+  function getRawDataPreview(
+    record: FailedImportRecord,
+  ) {
+    if (!record.rawData) {
+      return null;
+    }
+
+    const entries =
+      Object.entries(
+        record.rawData,
+      ).slice(0, 4);
+
+    if (entries.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+        {entries.map(
+          ([key, value]) => (
+            <span key={key}>
+              <span className="font-medium text-neutral-600">
+                {key}:
+              </span>{" "}
+              {String(value ?? "-")}
+            </span>
+          ),
+        )}
+      </div>
+    );
+  }
+
+  const percentage =
+    progress
+      ? Math.min(
+          Math.max(
+            progress.progressPercentage,
+            0,
+          ),
+          100,
+        )
+      : 0;
+
+  const hasFailedRecords =
+    (progress?.failedRecords ??
+      0) > 0 ||
+    failedRecords.length > 0;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-start justify-between border-b border-neutral-200 px-6 py-5">
           <div>
             <h2 className="text-xl font-semibold text-neutral-900">
@@ -295,7 +552,7 @@ function ImportProgressPanel({
           </button>
         </div>
 
-        <div className="p-6">
+        <div className="max-h-[70vh] overflow-y-auto p-6">
           {loading && (
             <div className="py-10 text-center text-sm text-neutral-500">
               Loading import progress...
@@ -303,7 +560,7 @@ function ImportProgressPanel({
           )}
 
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
             </div>
           )}
@@ -317,8 +574,10 @@ function ImportProgressPanel({
                   </p>
 
                   <p className="mt-1 text-sm text-neutral-500">
-                    {progress.processedRecords} of{" "}
-                    {progress.totalRecords} records processed
+                    {progress.processedRecords}{" "}
+                    of{" "}
+                    {progress.totalRecords}{" "}
+                    records processed
                   </p>
                 </div>
 
@@ -327,7 +586,9 @@ function ImportProgressPanel({
                     progress.status,
                   )}`}
                 >
-                  {getStatusLabel(progress.status)}
+                  {getStatusLabel(
+                    progress.status,
+                  )}
                 </span>
               </div>
 
@@ -339,7 +600,8 @@ function ImportProgressPanel({
 
                   <span
                     className={`font-bold ${
-                      progress.status === "completed"
+                      progress.status ===
+                      "completed"
                         ? "text-green-600"
                         : progress.status ===
                             "completed_with_errors"
@@ -350,7 +612,10 @@ function ImportProgressPanel({
                             : "text-neutral-900"
                     }`}
                   >
-                    {progress.progressPercentage}%
+                    {
+                      progress.progressPercentage
+                    }
+                    %
                   </span>
                 </div>
 
@@ -377,7 +642,9 @@ function ImportProgressPanel({
                   </p>
 
                   <p className="mt-1 text-xl font-bold text-neutral-900">
-                    {progress.processedRecords}
+                    {
+                      progress.processedRecords
+                    }
                   </p>
                 </div>
 
@@ -387,7 +654,9 @@ function ImportProgressPanel({
                   </p>
 
                   <p className="mt-1 text-xl font-bold text-green-700">
-                    {progress.successfulRecords}
+                    {
+                      progress.successfulRecords
+                    }
                   </p>
                 </div>
 
@@ -397,18 +666,169 @@ function ImportProgressPanel({
                   </p>
 
                   <p className="mt-1 text-xl font-bold text-orange-700">
-                    {progress.failedRecords}
+                    {
+                      progress.failedRecords
+                    }
                   </p>
                 </div>
               </div>
 
               {progress.failureMessage && (
                 <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {progress.failureMessage}
+                  {
+                    progress.failureMessage
+                  }
                 </div>
               )}
 
-              {progress.status === "completed" && (
+              {hasFailedRecords && (
+                <div className="mt-6 rounded-xl border border-orange-200 bg-orange-50/40 p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h3 className="font-semibold text-neutral-900">
+                        Failed Records
+                      </h3>
+
+                      <p className="mt-1 text-sm text-neutral-500">
+                        {
+                          progress.failedRecords
+                        }{" "}
+                        record
+                        {progress.failedRecords ===
+                        1
+                          ? ""
+                          : "s"}{" "}
+                        could not be imported.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleDownloadFailedRecords()
+                        }
+                        disabled={
+                          downloading ||
+                          loadingFailedRecords
+                        }
+                        className="rounded-lg border border-neutral-300 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {downloading
+                          ? "Downloading..."
+                          : "Download Failed Records"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleRetryAll()
+                        }
+                        disabled={
+                          retryingAll ||
+                          retryingRecordId !==
+                            null ||
+                          failedRecords.length ===
+                            0
+                        }
+                        className="rounded-lg bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {retryingAll
+                          ? "Retrying..."
+                          : "Retry All"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {failedRecordsError && (
+                    <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {
+                        failedRecordsError
+                      }
+                    </div>
+                  )}
+
+                  {loadingFailedRecords ? (
+                    <div className="mt-4 rounded-lg border border-neutral-200 bg-white p-6 text-center text-sm text-neutral-500">
+                      Loading failed records...
+                    </div>
+                  ) : failedRecords.length ===
+                    0 ? (
+                    <div className="mt-4 rounded-lg border border-neutral-200 bg-white p-6 text-center text-sm text-neutral-500">
+                      No failed records to retry.
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      {failedRecords.map(
+                        (record) => (
+                          <div
+                            key={
+                              record.id
+                            }
+                            className="rounded-lg border border-neutral-200 bg-white p-4"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-medium text-neutral-500">
+                                    Record #
+                                    {
+                                      record.id
+                                    }
+                                  </span>
+
+                                  {record.rowNumber !==
+                                    null && (
+                                    <span className="text-xs text-neutral-400">
+                                      CSV row{" "}
+                                      {
+                                        record.rowNumber
+                                      }
+                                    </span>
+                                  )}
+                                </div>
+
+                                <p className="mt-2 text-sm font-medium text-red-700">
+                                  {
+                                    record.errorMessage
+                                  }
+                                </p>
+
+                                {getRawDataPreview(
+                                  record,
+                                )}
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleRetryRecord(
+                                    record.id,
+                                  )
+                                }
+                                disabled={
+                                  retryingAll ||
+                                  retryingRecordId !==
+                                    null
+                                }
+                                className="shrink-0 rounded-lg border border-neutral-300 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {retryingRecordId ===
+                                record.id
+                                  ? "Retrying..."
+                                  : "Retry"}
+                              </button>
+                            </div>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {progress.status ===
+                "completed" && (
                 <div className="mt-5 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
                   Import completed successfully.
                 </div>
@@ -417,8 +837,9 @@ function ImportProgressPanel({
               {progress.status ===
                 "completed_with_errors" && (
                 <div className="mt-5 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-700">
-                  Import completed, but some records could not
-                  be imported.
+                  Import completed, but some
+                  records could not be
+                  imported.
                 </div>
               )}
             </div>

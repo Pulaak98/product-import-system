@@ -29,6 +29,12 @@ function App() {
     useState("");
 
   const [
+    submittedSearch,
+    setSubmittedSearch,
+  ] =
+    useState("");
+
+  const [
     status,
     setStatus,
   ] =
@@ -88,7 +94,7 @@ function App() {
         await getProducts({
           page,
           limit,
-          search,
+          search: submittedSearch,
           status,
         });
 
@@ -119,6 +125,7 @@ function App() {
   }, [
     page,
     status,
+    submittedSearch,
   ]);
 
   function handleSearch(
@@ -127,8 +134,7 @@ function App() {
     event.preventDefault();
 
     setPage(1);
-
-    void loadProducts();
+    setSubmittedSearch(search);
   }
 
   function handleStatusChange(
